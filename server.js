@@ -48,7 +48,7 @@ app.post('/api/cek-akun', async (req, res) => {
     let page; // Dideklarasikan di luar try agar bisa diakses oleh catch untuk screenshot
     
     try {
-        console.log(`[START] Scraping ${game_name} | ID: ${account_id} (STEALTH MODE)`);
+        console.log(`[START] Scraping ${game_name} | ID: ${account_id} (FAST MODE)`);
 
         browser = await puppeteer.launch({ 
             headless: "new",
@@ -56,108 +56,108 @@ app.post('/api/cek-akun', async (req, res) => {
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled' // Mencegah deteksi robot
+                '--disable-blink-features=AutomationControlled'
             ]
         });
         page = await browser.newPage();
         
-        // Randomize User-Agent agar terlihat seperti pengguna PC Windows biasa
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
+        // OPTIMASI 1: Blokir gambar & font untuk mempercepat loading web, tapi CSS dibiarkan agar tidak error
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            if(['image', 'media', 'font'].includes(req.resourceType())){
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+
         console.log(`Bypass Cloudflare menuju: ${targetUrl}`);
-        // Menunggu web benar-benar selesai loading (networkidle2) agar fitur ketik tidak error
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        // OPTIMASI 2: Ubah networkidle2 menjadi domcontentloaded agar tidak perlu menunggu tracking web selesai
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         
         // 1. Tunggu dan Ketik ID
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-        await new Promise(r => setTimeout(r, 2000));
+        // Jeda dipercepat menjadi 1 detik
+        await new Promise(r => setTimeout(r, 1000));
         
-        console.log('Memastikan fokus pada kotak input yang terlihat di layar...');
-        // Cari elemen yang visible, kosongkan, dan fokuskan
+        console.log('Fokus pada kotak input...');
         await page.evaluate((sel) => {
             const inputs = document.querySelectorAll(sel);
             for (let el of inputs) {
-                // Cek apakah elemen ini benar-benar tampil di layar (tidak disembunyikan)
                 if (el.offsetWidth > 0 && el.offsetHeight > 0) {
                     el.focus();
                     el.click();
-                    el.value = ''; // Kosongkan isi jika ada
-                    return; // Hentikan loop setelah menemukan yang visible
+                    el.value = ''; 
+                    return; 
                 }
             }
         }, inputSelector);
         
-        // Ketik langsung menggunakan simulasi Keyboard (Sangat akurat dan anti-React block)
-        console.log('Mengetik ID menggunakan simulasi keyboard...');
-        await page.keyboard.type(account_id, { delay: 150 });
+        // OPTIMASI 3: Ketik lebih cepat (50ms per huruf)
+        console.log('Mengetik ID...');
+        await page.keyboard.type(account_id, { delay: 50 });
         
-        // Jeda 2 detik agar Tokogame memproses ketikan ID tersebut
-        await new Promise(r => setTimeout(r, 2000));
+        // Jeda dipercepat menjadi 1 detik
+        await new Promise(r => setTimeout(r, 1000));
         
-        // Cek di terminal apakah ID benar-benar terisi di kotak yang visible
-        const idTerisi = await page.evaluate((sel) => {
-            const inputs = document.querySelectorAll(sel);
-            for (let el of inputs) {
-                if (el.offsetWidth > 0 && el.offsetHeight > 0) {
-                    return el.value;
-                }
-            }
-            return '';
-        }, inputSelector);
-        console.log(`[INFO] ID di layar saat ini: ${idTerisi}`);
-       // 2. Klik sembarang di layar untuk memicu Tokogame memunculkan popup
-        console.log('Mengklik layar untuk memicu pengecekan nama...');
-        
-        // 1. Klik koordinat kosong di pojok kiri atas (seperti menyentuh layar sembarang)
+        // 2. Klik sembarang di layar
+        console.log('Mengklik layar...');
         await page.mouse.click(10, 10);
-        
-        // 2. Klik elemen background utama (body)
         await page.click('body');
-
-        // 3. (Cadangan) Klik judul Koin Emas menggunakan native click Puppeteer
-        try {
-            await page.click(btnSelector);
-        } catch (e) {
-            // Abaikan jika tidak bisa diklik
-        }
         
-        // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
-        // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
-        console.log('Menunggu popup konfirmasi nama muncul...');
+        // 3. Tunggu popup SweetAlert2 muncul
+        console.log('Menunggu popup konfirmasi...');
         await page.waitForSelector('.swal2-popup', { timeout: 15000 });
         
-        // Jeda 4 detik agar web Tokogame selesai mencari nama dan teks loading hilang
-        console.log('Menunggu web memuat nama asli...');
-        await new Promise(r => setTimeout(r, 4000));
+        // OPTIMASI 4: SMART POLLING (Cek nama setiap 0.5 detik, tidak perlu diam 4 detik penuh)
+        console.log('Mengekstrak nama akun...');
+        let accountName = '';
+        let loopCount = 0;
         
-        // 4. Ekstrak nama dari seluruh teks di dalam popup
-        const accountName = await page.evaluate(() => {
-            const popup = document.querySelector('.swal2-popup');
-            if (!popup) return '';
+        while (loopCount < 10) { // Maksimal 10 x 500ms = 5 detik
+            await new Promise(r => setTimeout(r, 500));
             
-            const text = popup.innerText || '';
-            const lines = text.split('\n');
-            
-            for (let line of lines) {
-                // Cari baris yang mengandung kata "Username" atau "Nama" (huruf kecil/besar bebas)
-                if (line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) {
-                    let parts = line.split(':'); 
-                    if (parts.length > 1) {
-                        return parts[1].trim(); 
+            accountName = await page.evaluate(() => {
+                const popup = document.querySelector('.swal2-popup');
+                if (!popup) return '';
+                
+                const text = popup.innerText || '';
+                
+                // Jika masih ada kata "Mencari", beri kode LOADING agar loop terus berjalan
+                if (text.toLowerCase().includes('mencari')) {
+                    return 'LOADING';
+                }
+                
+                const lines = text.split('\n');
+                for (let line of lines) {
+                    if (line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) {
+                        let parts = line.split(':'); 
+                        if (parts.length > 1) return parts[1].trim(); 
                     }
                 }
+                return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
+            });
+
+            // Jika bot berhasil mendapat nama selain "LOADING" atau kosong, langsung hentikan loop!
+            if (accountName !== 'LOADING' && accountName !== '') {
+                break; 
             }
-            
-            // Jika tidak ada kata "Username:", ambil baris ke-2 atau gabungkan semua teks
-            return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
-        });
+            loopCount++;
+        }
+        
+        // Jika karena suatu hal nama gagal didapat dan masih "LOADING", anggap manual
+        if (accountName === 'LOADING' || accountName === '') {
+            throw new Error('Nama gagal termuat atau ID tidak ditemukan.');
+        }
         
         console.log(`[BERHASIL] Nama ditemukan: ${accountName}`);
 
         res.json({ success: true, account_name: accountName, is_manual: false });
-
+        
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
         
