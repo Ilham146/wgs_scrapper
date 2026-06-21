@@ -82,6 +82,9 @@ app.post('/api/cek-akun', (req, res) => {
 // ==========================================
 // LOGIKA MESIN SCRAPER (TURBO-FINAL)
 // ==========================================
+// ==========================================
+// LOGIKA MESIN SCRAPER (TURBO-FINAL)
+// ==========================================
 const runScraper = async (req, res) => {
     const { game_name, account_id, server_id } = req.body;
 
@@ -104,22 +107,8 @@ const runScraper = async (req, res) => {
         const startTime = Date.now();
         console.log(`\n[PROSES] Mulai Scraping ${game_name} | ID: ${account_id}`);
 
-        // Gunakan browser yang sudah ada, hanya buka TAB BARU
         page = await browser.newPage();
-        
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-        // Mempercepat loading dengan memblokir gambar/CSS jika tidak diperlukan (Opsional)
-        /*
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if(['image', 'stylesheet', 'font'].includes(req.resourceType())){
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
-        */
 
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
@@ -140,7 +129,6 @@ const runScraper = async (req, res) => {
         }
 
         await new Promise(r => setTimeout(r, 400)); 
-
         await page.keyboard.press('Tab');
         
         let accountName = '';
@@ -160,14 +148,10 @@ const runScraper = async (req, res) => {
                     const isInfoIcon = popup.querySelector('.swal2-info');
                     const isErrorIcon = popup.querySelector('.swal2-error');
                     
+                    // --- BAGIAN YANG DIUBAH ---
+                    // Jika ada indikasi error dari Tokogame, langsung tembak pesan custom
                     if (isInfoIcon || isErrorIcon || textLower.includes('tidak ditemukan') || textLower.includes('salah') || textLower.includes('gagal')) {
-                        let errMsg = text.replace(/\n/g, ' ').trim();
-                        if (!errMsg || errMsg === 'i' || errMsg === 'x' || errMsg === '!') {
-                            errMsg = "ID Pemain tidak ditemukan / Format salah.";
-                        } else if (errMsg.startsWith('i ')) {
-                            errMsg = errMsg.substring(2); 
-                        }
-                        return 'ERROR_WEB:' + errMsg;
+                        return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
                     }
 
                     const lines = text.split('\n');
@@ -185,8 +169,9 @@ const runScraper = async (req, res) => {
                     const txt = el.innerText || '';
                     const txtLower = txt.toLowerCase();
 
+                    // --- BAGIAN YANG DIUBAH ---
                     if (txtLower.includes('tidak ditemukan') && (txtLower.includes('id') || txtLower.includes('pemain'))) {
-                         return 'ERROR_WEB:' + txt.replace(/\n/g, ' ').trim();
+                         return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
                     }
 
                     if (txt.includes('Username') || txt.includes('Nama')) {
@@ -226,11 +211,11 @@ const runScraper = async (req, res) => {
         res.json({ 
             success: false, 
             is_manual: !isDitolak, 
+            // --- BAGIAN YANG DIUBAH ---
             message: isDitolak ? error.message.replace('Ditolak: ', '') : "Sistem sedang sibuk, silakan input manual username Anda." 
         });
     } finally {
         if (page && !page.isClosed()) {
-            // HANYA TUTUP TAB, BUKAN BROWSER
             await page.close();
             console.log(`[SELESAI] Tab ditutup. Lanjut antrian...\n`);
         }
