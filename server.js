@@ -31,8 +31,8 @@ app.post('/api/cek-akun', async (req, res) => {
     let page; 
     
     try {
-        console.log(`\n[TURBO] Scraping ${game_name} | ID: ${account_id}`);
         const startTime = Date.now();
+        console.log(`\n[TURBO-STABIL] Scraping ${game_name} | ID: ${account_id}`);
 
         browser = await puppeteer.launch({ 
             headless: true, 
@@ -47,7 +47,7 @@ app.post('/api/cek-akun', async (req, res) => {
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // OPTIMASI: Blokir aset statis agar loading web instan
+        // OPTIMASI: Blokir gambar agar loading HTML lebih cepat
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if(['image', 'media', 'font'].includes(req.resourceType())){
@@ -57,39 +57,46 @@ app.post('/api/cek-akun', async (req, res) => {
             }
         });
 
-        // OPTIMASI: domcontentloaded (Langsung hajar begitu HTML dasar muncul)
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        
+        // Tunggu DOM awal saja, tidak perlu tunggu iklan/tracker
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
         await page.waitForSelector(inputSelector, { visible: true, timeout: 10000 });
         
-        // JEDA WAJIB 500ms: Membiarkan React Hydration selesai agar ketikan bot tidak dianggap render awal
-        await new Promise(r => setTimeout(r, 500)); 
+        // SABUK PENGAMAN 1: Beri waktu 800ms agar React selesai Hydration
+        await new Promise(r => setTimeout(r, 800)); 
 
+        console.log('[1/3] Mengetik ID...');
         await page.focus(inputSelector);
         await page.keyboard.down('Control');
         await page.keyboard.press('A');
         await page.keyboard.up('Control');
         await page.keyboard.press('Backspace'); 
 
-        // OPTIMASI: Ketik turbo (10ms per huruf)
-        await page.type(inputSelector, account_id, { delay: 10 });
+        // Ketik dengan delay 30ms (Sangat Cepat tapi masih terbaca React)
+        await page.type(inputSelector, account_id, { delay: 30 });
         
-        // Tekan TAB untuk memicu pencarian (Logika yang terbukti berhasil)
+        // Verifikasi kilat apakah ketikan masuk
+        const checkValue = await page.$eval(inputSelector, el => el.value);
+        if (checkValue !== account_id) {
+            throw new Error('Ketikan ditolak oleh sistem web (React Reset).');
+        }
+
+        console.log('[2/3] Meminta data ke server Tokogame...');
         await page.keyboard.press('Tab');
         
-        // OPTIMASI: Smart Polling 200ms (Sangat agresif mengecek popup)
+        console.log('[3/3] Memindai respons nama...');
         let accountName = '';
         let loopCount = 0;
         
-        while (loopCount < 25) { 
-            await new Promise(r => setTimeout(r, 200)); 
+        // POLLING SUPER CEPAT: Cek layar setiap 250ms (Maksimal 6 detik pencarian)
+        while (loopCount < 24) { 
+            await new Promise(r => setTimeout(r, 250)); 
             
             accountName = await page.evaluate(() => {
+                // Skenario A: Jika muncul di popup swal2
                 const popup = document.querySelector('.swal2-popup');
                 if (popup) {
                     const text = popup.innerText || '';
                     if (text.toLowerCase().includes('mencari') || text.toLowerCase().includes('loading')) return 'LOADING';
-                    
                     const lines = text.split('\n');
                     for (let line of lines) {
                         if (line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) {
@@ -99,19 +106,35 @@ app.post('/api/cek-akun', async (req, res) => {
                     }
                     return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
                 }
+
+                // Skenario B (SABUK PENGAMAN 2): Jika web mengubah desain dan nama muncul di teks biasa
+                const allDivs = document.querySelectorAll('div, span, p, b, strong');
+                for (let el of allDivs) {
+                    const txt = el.innerText || '';
+                    if (txt.includes('Username') || txt.includes('Nama')) {
+                        const lines = txt.split('\n');
+                        for (let line of lines) {
+                            if ((line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) && line.includes(':')) {
+                                let parts = line.split(':');
+                                if (parts[1] && parts[1].trim() !== '') return parts[1].trim();
+                            }
+                        }
+                    }
+                }
                 return '';
             });
 
+            // Langsung hentikan loop jika nama valid ditemukan!
             if (accountName !== 'LOADING' && accountName !== '') break; 
             loopCount++;
         }
         
         if (accountName === 'LOADING' || accountName === '') {
-            throw new Error('Nama gagal termuat dari popup.');
+            throw new Error('Timeout: Web tidak merespons atau ID salah.');
         }
         
         const timeTaken = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`[BERHASIL] Nama: ${accountName} (Selesai dalam ${timeTaken} detik)`);
+        console.log(`[BERHASIL] ${accountName} (Durasi: ${timeTaken} detik)`);
 
         res.json({ success: true, account_name: accountName, is_manual: false });
         
@@ -127,5 +150,5 @@ app.post('/api/cek-akun', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Stealth Scraper Turbo berjalan di port ${PORT}`);
+    console.log(`🚀 Stealth Scraper Turbo-Stabil berjalan di port ${PORT}`);
 });
