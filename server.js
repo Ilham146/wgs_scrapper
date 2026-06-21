@@ -10,14 +10,43 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// SISTEM ANTRIAN (QUEUE) ANTI-CRASH
+// VARIABEL GLOBAL BROWSER & ANTRIAN
 // ==========================================
+let browser; // Menyimpan instance browser agar tidak buka-tutup terus
 let isScraping = false;
 const requestQueue = [];
 
+// Fungsi untuk inisialisasi browser saat server menyala
+const initBrowser = async () => {
+    try {
+        console.log('[SISTEM] Memulai browser...');
+        browser = await puppeteer.launch({ 
+            headless: true, 
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled'
+            ]
+        });
+        console.log('[SISTEM] Browser berhasil diluncurkan dan siap menerima request.');
+        
+        // Jaga-jaga jika browser crash/tertutup sendiri, kita nyalakan ulang
+        browser.on('disconnected', () => {
+            console.log('[SISTEM] Browser terputus! Melakukan restart...');
+            initBrowser();
+        });
+    } catch (error) {
+        console.error('[ERROR] Gagal memuat browser:', error.message);
+    }
+};
+
+// ==========================================
+// SISTEM ANTRIAN (QUEUE) ANTI-CRASH
+// ==========================================
 const processQueue = async () => {
-    // Jika bot sedang jalan atau antrian kosong, diam saja.
-    if (isScraping || requestQueue.length === 0) return;
+    // Jika bot sedang jalan, antrian kosong, atau browser belum siap, diam saja.
+    if (isScraping || requestQueue.length === 0 || !browser) return;
     
     // Kunci bot agar tidak menerima request ganda
     isScraping = true;
@@ -69,25 +98,28 @@ const runScraper = async (req, res) => {
         return res.json({ success: false, is_manual: true, message: "Game tidak didukung otomatis." });
     }
 
-    let browser;
     let page; 
     
     try {
         const startTime = Date.now();
         console.log(`\n[PROSES] Mulai Scraping ${game_name} | ID: ${account_id}`);
 
-        browser = await puppeteer.launch({ 
-            headless: true, 
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled'
-            ]
-        });
+        // Gunakan browser yang sudah ada, hanya buka TAB BARU
         page = await browser.newPage();
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+        // Mempercepat loading dengan memblokir gambar/CSS jika tidak diperlukan (Opsional)
+        /*
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            if(['image', 'stylesheet', 'font'].includes(req.resourceType())){
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+        */
 
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
@@ -197,14 +229,17 @@ const runScraper = async (req, res) => {
             message: isDitolak ? error.message.replace('Ditolak: ', '') : "Sistem sedang sibuk, silakan input manual username Anda." 
         });
     } finally {
-        if (browser) {
-            await browser.close();
-            console.log(`[SELESAI] Browser ditutup. Lanjut antrian...\n`);
+        if (page && !page.isClosed()) {
+            // HANYA TUTUP TAB, BUKAN BROWSER
+            await page.close();
+            console.log(`[SELESAI] Tab ditutup. Lanjut antrian...\n`);
         }
     }
 };
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Stealth Scraper dengan Sistem Antrian berjalan di port ${PORT}`);
+app.listen(PORT, async () => {
+    // Jalankan browser sesaat setelah server menyala
+    await initBrowser();
+    console.log(`🚀 Stealth Scraper Turbo dengan Sistem Antrian berjalan di port ${PORT}`);
 });
