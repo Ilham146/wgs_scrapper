@@ -29,7 +29,7 @@ app.post('/api/cek-akun', async (req, res) => {
     // ==========================================
     if (game_name.includes('royal')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/royal-dream-coins-chips'; 
-        inputSelector = 'input[placeholder="Masukkan User ID"]';           
+        inputSelector = 'input[placeholder="Masukkan User ID"]';            
         btnSelector = 'h2[id="Koin Emas"]';                                  
     } 
     // ==========================================
@@ -48,10 +48,10 @@ app.post('/api/cek-akun', async (req, res) => {
     let page; // Dideklarasikan di luar try agar bisa diakses oleh catch untuk screenshot
     
     try {
-        console.log(`[START] Scraping ${game_name} | ID: ${account_id} (FAST MODE)`);
+        console.log(`\n[START] Scraping ${game_name} | ID: ${account_id}`);
 
         browser = await puppeteer.launch({ 
-            headless: "new",
+            headless: true, // Gunakan true, bukan "new" (sudah deprecated)
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
@@ -63,7 +63,7 @@ app.post('/api/cek-akun', async (req, res) => {
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // OPTIMASI 1: Blokir gambar & font untuk mempercepat loading web, tapi CSS dibiarkan agar tidak error
+        // OPTIMASI: Blokir gambar, media, dan font untuk mempercepat loading web
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if(['image', 'media', 'font'].includes(req.resourceType())){
@@ -74,51 +74,38 @@ app.post('/api/cek-akun', async (req, res) => {
         });
 
         console.log(`Bypass Cloudflare menuju: ${targetUrl}`);
-        // OPTIMASI 2: Ubah networkidle2 menjadi domcontentloaded agar tidak perlu menunggu tracking web selesai
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        // WAJIB networkidle2 agar Cloudflare selesai memproses challenge-nya
+        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
         
-        // 1. Tunggu dan Ketik ID
+        // 1. Tunggu Elemen Input
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-        // Jeda dipercepat menjadi 1 detik
-        await new Promise(r => setTimeout(r, 1000));
-        
-        console.log('Fokus pada kotak input...');
-        await page.evaluate((sel) => {
-            const inputs = document.querySelectorAll(sel);
-            for (let el of inputs) {
-                if (el.offsetWidth > 0 && el.offsetHeight > 0) {
-                    el.focus();
-                    el.click();
-                    el.value = ''; 
-                    return; 
-                }
-            }
-        }, inputSelector);
-        
-        // OPTIMASI 3: Ketik lebih cepat (50ms per huruf)
+        // 2. Fokus dan Ketik ID secara natural
         console.log('Mengetik ID...');
-        await page.keyboard.type(account_id, { delay: 50 });
+        await page.click(inputSelector, { clickCount: 3 }); // Blokir teks lama jika ada
+        await page.type(inputSelector, account_id, { delay: 120 }); // Delay 120ms agar aman dari deteksi bot
         
-        // Jeda dipercepat menjadi 1 detik
-        await new Promise(r => setTimeout(r, 1000));
+        // 3. Klik area verifikasi atau sembarang di layar
+        console.log('Memproses input...');
+        if (btnSelector) {
+            // Tunggu sebentar untuk memastikan tombol bisa diklik
+            await page.waitForSelector(btnSelector, { visible: true, timeout: 5000 }).catch(() => {});
+            await page.click(btnSelector).catch(() => page.click('body'));
+        } else {
+            await page.click('body');
+        }
         
-        // 2. Klik sembarang di layar
-        console.log('Mengklik layar...');
-        await page.mouse.click(10, 10);
-        await page.click('body');
-        
-        // 3. Tunggu popup SweetAlert2 muncul
+        // 4. Tunggu popup SweetAlert2 muncul
         console.log('Menunggu popup konfirmasi...');
-        await page.waitForSelector('.swal2-popup', { timeout: 15000 });
+        await page.waitForSelector('.swal2-popup', { visible: true, timeout: 15000 });
         
-        // OPTIMASI 4: SMART POLLING (Cek nama setiap 0.5 detik, tidak perlu diam 4 detik penuh)
+        // 5. SMART POLLING (Cek nama setiap 0.5 detik tanpa hard delay)
         console.log('Mengekstrak nama akun...');
         let accountName = '';
         let loopCount = 0;
         
-        while (loopCount < 10) { // Maksimal 10 x 500ms = 5 detik
+        while (loopCount < 15) { // Maksimal 15 x 500ms = 7.5 detik pencarian
             await new Promise(r => setTimeout(r, 500));
             
             accountName = await page.evaluate(() => {
@@ -127,8 +114,8 @@ app.post('/api/cek-akun', async (req, res) => {
                 
                 const text = popup.innerText || '';
                 
-                // Jika masih ada kata "Mencari", beri kode LOADING agar loop terus berjalan
-                if (text.toLowerCase().includes('mencari')) {
+                // Jika masih ada kata "Mencari" atau "Loading", beri kode agar loop terus berjalan
+                if (text.toLowerCase().includes('mencari') || text.toLowerCase().includes('loading')) {
                     return 'LOADING';
                 }
                 
@@ -139,19 +126,20 @@ app.post('/api/cek-akun', async (req, res) => {
                         if (parts.length > 1) return parts[1].trim(); 
                     }
                 }
+                // Fallback jika format web tidak menggunakan titik dua (:)
                 return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
             });
 
-            // Jika bot berhasil mendapat nama selain "LOADING" atau kosong, langsung hentikan loop!
+            // Jika bot berhasil mendapat nama selain "LOADING" atau kosong, langsung hentikan loop
             if (accountName !== 'LOADING' && accountName !== '') {
                 break; 
             }
             loopCount++;
         }
         
-        // Jika karena suatu hal nama gagal didapat dan masih "LOADING", anggap manual
+        // Jika nama gagal didapat dan masih "LOADING" setelah 7.5 detik
         if (accountName === 'LOADING' || accountName === '') {
-            throw new Error('Nama gagal termuat atau ID tidak ditemukan.');
+            throw new Error('Nama gagal termuat atau ID tidak ditemukan di server game.');
         }
         
         console.log(`[BERHASIL] Nama ditemukan: ${accountName}`);
@@ -175,12 +163,12 @@ app.post('/api/cek-akun', async (req, res) => {
     } finally {
         if (browser) {
             await browser.close();
-            console.log('[SELESAI] Browser ditutup untuk menghemat memori.');
+            console.log('[SELESAI] Browser ditutup.');
         }
     }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Stealth Scraper WGS berjalan di port ${PORT}`);
+    console.log(`🚀 Stealth Scraper berjalan di port ${PORT}`);
 });
