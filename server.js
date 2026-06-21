@@ -36,7 +36,7 @@ app.post('/api/cek-akun', async (req, res) => {
     // 2. KONFIGURASI HIGGS DOMINO (VIA TOKOGAME)
     // ==========================================
     else if (game_name.includes('higgs') || game_name.includes('island')) {
-        targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-resmi'; 
+        targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-emas'; 
         inputSelector = 'input[placeholder="Masukkan User ID"]';
         btnSelector = 'h2[id="Kartu Emas (Tukar ke Koin Emas)"]';
     } 
