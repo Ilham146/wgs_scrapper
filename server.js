@@ -18,19 +18,14 @@ app.post('/api/cek-akun', async (req, res) => {
     let targetUrl = '';
     let inputSelector = '';
     let btnSelector = '';
-    let resultSelector = '';
 
-    // ==========================================
-    // 1. KONFIGURASI ROYAL DREAM (VIA TOKOGAME)
-    // ==========================================
     // ==========================================
     // 1. KONFIGURASI ROYAL DREAM (VIA TOKOGAME)
     // ==========================================
     if (game_name.includes('royal')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/royal-dream-coins-chips'; 
-        inputSelector = 'input[name="userid"]'; // <--- INI YANG BENAR           
-        btnSelector = '[id="Koin Emas"]';                 
-        resultSelector = '#swal2-title';                 
+        inputSelector = 'input[name="userid"]';              
+        btnSelector = 'h2[id="Koin Emas"]';                                  
     } 
     // ==========================================
     // 2. KONFIGURASI HIGGS DOMINO (VIA TOKOGAME)
@@ -38,14 +33,15 @@ app.post('/api/cek-akun', async (req, res) => {
     else if (game_name.includes('higgs') || game_name.includes('island')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-resmi'; 
         inputSelector = 'input[name="userid"]';
-        btnSelector = '[id="Kartu Emas (Tukar ke Koin Emas)"]';
-        resultSelector = '#swal2-title';
+        btnSelector = 'h2[id="Kartu Emas (Tukar ke Koin Emas)"]';
     } 
     else {
         return res.json({ success: false, is_manual: true, message: "Game tidak didukung otomatis." });
     }
 
     let browser;
+    let page; // Dideklarasikan di luar try agar bisa diakses oleh catch untuk screenshot
+    
     try {
         console.log(`[START] Scraping ${game_name} | ID: ${account_id} (STEALTH MODE)`);
 
@@ -58,7 +54,7 @@ app.post('/api/cek-akun', async (req, res) => {
                 '--disable-blink-features=AutomationControlled' // Mencegah deteksi robot
             ]
         });
-        const page = await browser.newPage();
+        page = await browser.newPage();
         
         // Randomize User-Agent agar terlihat seperti pengguna PC Windows biasa
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -77,28 +73,52 @@ app.post('/api/cek-akun', async (req, res) => {
         // Tunggu domcontentloaded agar tidak perlu menunggu tracking web Tokogame selesai
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         
-        // 1. Ketik ID
+        // 1. Tunggu dan Ketik ID
+        console.log('Menunggu elemen input ID...');
+        await page.waitForSelector(inputSelector, { timeout: 15000 });
         await page.type(inputSelector, account_id);
         
         // Jeda 1 detik agar script Tokogame mendeteksi bahwa ada ID yang diketik
         await new Promise(r => setTimeout(r, 1000));
         
-        // 2. Klik tombol kotak nominal (Koin Emas / Kartu Emas)
+        // 2. Klik tombol kotak nominal dengan Javascript Evaluation (Anti-Gagal)
         console.log('Mengklik kotak nominal...');
-        await page.click(btnSelector);
-        
-        // 3. Tunggu popup SweetAlert2 muncul
-        console.log('Menunggu popup konfirmasi nama muncul...');
-        await page.waitForSelector(resultSelector, { timeout: 10000 });
-        
-        // 4. Ekstrak nama dan buang tulisan "Username:"
-        const accountName = await page.$eval(resultSelector, el => {
-            let text = el.innerText || ''; // Contoh format dari web: "Username: KakekMerah"
-            let parts = text.split(':'); 
-            if (parts.length > 1) {
-                return parts[1].trim(); // Ambil kata setelah titik dua, hasilnya: "KakekMerah"
+        await page.evaluate((selector) => {
+            const element = document.querySelector(selector);
+            if (element) {
+                element.click();
+            } else {
+                throw new Error(`Tombol nominal ${selector} tidak ditemukan!`);
             }
-            return text.trim();
+        }, btnSelector);
+        
+        // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
+        console.log('Menunggu popup konfirmasi nama muncul...');
+        await page.waitForSelector('.swal2-popup', { timeout: 15000 });
+        
+        // Jeda setengah detik agar animasi popup selesai dan teks termuat sempurna
+        await new Promise(r => setTimeout(r, 500));
+        
+        // 4. Ekstrak nama dari seluruh teks di dalam popup
+        const accountName = await page.evaluate(() => {
+            const popup = document.querySelector('.swal2-popup');
+            if (!popup) return '';
+            
+            const text = popup.innerText || '';
+            const lines = text.split('\n');
+            
+            for (let line of lines) {
+                // Cari baris yang mengandung kata "Username" atau "Nama" (huruf kecil/besar bebas)
+                if (line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) {
+                    let parts = line.split(':'); 
+                    if (parts.length > 1) {
+                        return parts[1].trim(); 
+                    }
+                }
+            }
+            
+            // Jika tidak ada kata "Username:", ambil baris ke-2 atau gabungkan semua teks
+            return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
         });
         
         console.log(`[BERHASIL] Nama ditemukan: ${accountName}`);
@@ -107,7 +127,18 @@ app.post('/api/cek-akun', async (req, res) => {
 
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
-        res.json({ success: false, is_manual: true, message: "Sistem antri/sibuk karena proteksi Cloudflare." });
+        
+        // Ambil screenshot jika terjadi error untuk proses debugging
+        if (page) {
+            try {
+                await page.screenshot({ path: 'error-screenshot.png' });
+                console.log('[INFO] Screenshot halaman error disimpan sebagai error-screenshot.png');
+            } catch (screenshotError) {
+                console.log('Gagal mengambil screenshot.');
+            }
+        }
+
+        res.json({ success: false, is_manual: true, message: "Sistem antri/sibuk karena proteksi Cloudflare atau web berubah." });
     } finally {
         if (browser) {
             await browser.close();
