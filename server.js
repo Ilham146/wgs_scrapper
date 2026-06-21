@@ -10,6 +10,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get('/lihat-error', (req, res) => {
+    res.sendFile(__dirname + '/error-screenshot.png');
+});
+
 app.post('/api/cek-akun', async (req, res) => {
     const { game_name, account_id, server_id } = req.body;
 
