@@ -62,63 +62,49 @@ app.post('/api/cek-akun', async (req, res) => {
         console.log(`Bypass Cloudflare menuju: ${targetUrl}`);
         await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
         
-        // 1. Tunggu Elemen Input
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-       // 2. KETIK ID DENGAN BYPASS REACT STATE (ANTI-HAPUS)
-        console.log('Mencoba mengetik ID dan mengunci state...');
-        
-        await page.waitForSelector(inputSelector, { visible: true });
+        // 1. KETIK ID DENGAN SIMULASI NATURAL
+        console.log('Mengetik ID ke form...');
         await page.focus(inputSelector);
-        await new Promise(r => setTimeout(r, 500));
-        
-        // Eksekusi injeksi native untuk memaksa React menerima input bot
-        await page.evaluate((sel, id) => {
-            const el = document.querySelector(sel);
-            if (el) {
-                // Trik mem-bypass internal tracker React
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                nativeInputValueSetter.call(el, id);
-                
-                // Tembakkan event seolah-olah ada ketikan nyata
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        }, inputSelector, account_id);
+        await new Promise(r => setTimeout(r, 500)); 
 
-        // Lakukan pancingan fisik agar UI benar-benar merespons
-        await page.focus(inputSelector);
-        await page.keyboard.press('Space');
-        await page.keyboard.press('Backspace');
-        
-        // TEKAN ENTER: Langkah krusial untuk mengunci input di form modern
+        // Bersihkan kotak input jika ada sisa
+        await page.click(inputSelector, { clickCount: 3 });
+        await page.keyboard.press('Backspace'); 
+        await new Promise(r => setTimeout(r, 500));
+
+        // Ketik ID perlahan
+        await page.type(inputSelector, account_id, { delay: 150 });
+        await new Promise(r => setTimeout(r, 500));
+
+        // Tekan Enter untuk memastikan React menangkap event submit/change
         await page.keyboard.press('Enter');
+
+        // 2. TRIGGER PENCARIAN (BLUR) TANPA SALAH KLIK
+        console.log('Memindahkan fokus (blur) untuk memicu pencarian...');
+        
+        // Cara 1: Tekan TAB (Sangat natural, kursor akan pindah ke elemen berikutnya tanpa klik)
+        await page.keyboard.press('Tab');
         await new Promise(r => setTimeout(r, 1000));
 
-        // Verifikasi terakhir sebelum klik keluar
-        const finalValue = await page.$eval(inputSelector, el => el.value);
-        console.log(`[Verifikasi] Web berhasil mengunci input sebagai: "${finalValue}"`);
-
-        if (!finalValue) {
-             throw new Error('Gagal: Web kembali menghapus input bot.');
-        }
-
-        // 3. KLIK SEMBARANG UNTUK MEMICU POPUP NAMA
-        console.log('Mengklik sembarang (body) untuk memicu pencarian nama...');
-        // Gunakan Tab untuk memindahkan fokus secara natural sebelum klik
-        await page.keyboard.press('Tab'); 
-        await new Promise(r => setTimeout(r, 500));
+        // Cara 2 (Backup): Klik pada teks "Cari Akun Anda" yang netral, dijamin tidak memicu loading web
+        await page.evaluate(() => {
+            const elements = document.querySelectorAll('h2, h3, div, span, p, strong');
+            for (let el of elements) {
+                if (el.innerText && el.innerText.trim() === 'Cari Akun Anda') {
+                    el.click();
+                    break; 
+                }
+            }
+        });
         
-        // Klik koordinat aman di pojok atas, lalu klik body
-        await page.mouse.click(10, 10); 
-        await page.click('body');
-        
-        // 4. Tunggu popup SweetAlert2 muncul
+        // 3. TUNGGU POPUP SWEETALERT2
         console.log('Menunggu popup konfirmasi...');
         await page.waitForSelector('.swal2-popup', { visible: true, timeout: 15000 });
         
-        // 5. SMART POLLING (Ekstrak Nama)
+        // 4. EKSTRAKSI NAMA
         console.log('Mengekstrak nama akun...');
         let accountName = '';
         let loopCount = 0;
@@ -176,7 +162,7 @@ app.post('/api/cek-akun', async (req, res) => {
     } finally {
         if (browser) {
             await browser.close();
-            console.log('[SELESAI] Browser ditutup.');
+            console.log('[SELESAI] Browser ditutup.\n');
         }
     }
 });
