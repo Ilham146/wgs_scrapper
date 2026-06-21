@@ -9,10 +9,52 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.post('/api/cek-akun', async (req, res) => {
-    const { game_name, account_id, server_id } = req.body;
+// ==========================================
+// SISTEM ANTRIAN (QUEUE) ANTI-CRASH
+// ==========================================
+let isScraping = false;
+const requestQueue = [];
 
+const processQueue = async () => {
+    // Jika bot sedang jalan atau antrian kosong, diam saja.
+    if (isScraping || requestQueue.length === 0) return;
+    
+    // Kunci bot agar tidak menerima request ganda
+    isScraping = true;
+    
+    // Ambil orang pertama di barisan antrian
+    const { req, res } = requestQueue.shift();
+    
+    try {
+        await runScraper(req, res);
+    } catch (error) {
+        if (!res.headersSent) {
+            res.json({ success: false, is_manual: true, message: "Terjadi kesalahan internal server." });
+        }
+    } finally {
+        // Buka kunci, lalu panggil orang selanjutnya di antrian
+        isScraping = false;
+        processQueue(); 
+    }
+};
+
+app.post('/api/cek-akun', (req, res) => {
+    const { account_id } = req.body;
     if (!account_id) return res.status(400).json({ success: false, message: "ID kosong" });
+
+    // Masukkan request ke dalam loket antrian
+    requestQueue.push({ req, res });
+    console.log(`[ANTRIAN] ID: ${account_id} masuk antrian. Menunggu giliran: ${requestQueue.length} request.`);
+    
+    // Jalankan antrian
+    processQueue();
+});
+
+// ==========================================
+// LOGIKA MESIN SCRAPER (TURBO-FINAL)
+// ==========================================
+const runScraper = async (req, res) => {
+    const { game_name, account_id, server_id } = req.body;
 
     let targetUrl = '';
     let inputSelector = 'input[placeholder="Masukkan User ID"]';
@@ -32,7 +74,7 @@ app.post('/api/cek-akun', async (req, res) => {
     
     try {
         const startTime = Date.now();
-        console.log(`\n[TURBO-FINAL] Scraping ${game_name} | ID: ${account_id}`);
+        console.log(`\n[PROSES] Mulai Scraping ${game_name} | ID: ${account_id}`);
 
         browser = await puppeteer.launch({ 
             headless: true, 
@@ -47,13 +89,11 @@ app.post('/api/cek-akun', async (req, res) => {
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        console.log('Menuju situs...');
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
         await new Promise(r => setTimeout(r, 1200)); 
 
-        console.log('[1/3] Mengetik ID...');
         await page.focus(inputSelector);
         await page.keyboard.down('Control');
         await page.keyboard.press('A');
@@ -69,10 +109,8 @@ app.post('/api/cek-akun', async (req, res) => {
 
         await new Promise(r => setTimeout(r, 400)); 
 
-        console.log('[2/3] Meminta data ke server...');
         await page.keyboard.press('Tab');
         
-        console.log('[3/3] Memindai respons...');
         let accountName = '';
         let loopCount = 0;
         
@@ -87,19 +125,15 @@ app.post('/api/cek-akun', async (req, res) => {
                     
                     if (textLower.includes('mencari') || textLower.includes('loading')) return 'LOADING';
                     
-                    // ==========================================
-                    // DETEKSI ERROR BERDASARKAN CLASS HTML (BARU)
-                    // ==========================================
                     const isInfoIcon = popup.querySelector('.swal2-info');
                     const isErrorIcon = popup.querySelector('.swal2-error');
                     
                     if (isInfoIcon || isErrorIcon || textLower.includes('tidak ditemukan') || textLower.includes('salah') || textLower.includes('gagal')) {
-                        // Bersihkan teks (terkadang popup error hanya berisi teks "i" dari ikon info)
                         let errMsg = text.replace(/\n/g, ' ').trim();
                         if (!errMsg || errMsg === 'i' || errMsg === 'x' || errMsg === '!') {
                             errMsg = "ID Pemain tidak ditemukan / Format salah.";
                         } else if (errMsg.startsWith('i ')) {
-                            errMsg = errMsg.substring(2); // Buang huruf 'i' dari awal pesan
+                            errMsg = errMsg.substring(2); 
                         }
                         return 'ERROR_WEB:' + errMsg;
                     }
@@ -114,7 +148,6 @@ app.post('/api/cek-akun', async (req, res) => {
                     return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
                 }
 
-                // Fallback pencarian teks biasa
                 const allDivs = document.querySelectorAll('div, span, p, b, strong');
                 for (let el of allDivs) {
                     const txt = el.innerText || '';
@@ -141,9 +174,6 @@ app.post('/api/cek-akun', async (req, res) => {
             loopCount++;
         }
         
-        // ==========================================
-        // TANGANI ERROR YANG DITANGKAP DARI WEBSITE
-        // ==========================================
         if (accountName.startsWith('ERROR_WEB:')) {
             const pesanError = accountName.replace('ERROR_WEB:', '');
             throw new Error(`Ditolak: ${pesanError}`);
@@ -160,25 +190,21 @@ app.post('/api/cek-akun', async (req, res) => {
         
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
-        
-        // Cek apakah errornya karena ID salah (ditolak web) atau karena Timeout/Sibuk
         const isDitolak = error.message.includes('Ditolak');
-        
         res.json({ 
             success: false, 
-            is_manual: !isDitolak, // Input manual HANYA aktif jika BUKAN karena ditolak (artinya server sibuk)
-            message: isDitolak 
-                ? "ID Anda salah, silakan cek kembali ID Anda." 
-                : "Sistem sedang sibuk, silakan input manual username Anda." 
+            is_manual: !isDitolak, 
+            message: isDitolak ? error.message.replace('Ditolak: ', '') : "Sistem sedang sibuk, silakan input manual username Anda." 
         });
     } finally {
         if (browser) {
             await browser.close();
+            console.log(`[SELESAI] Browser ditutup. Lanjut antrian...\n`);
         }
     }
-});
+};
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Stealth Scraper Turbo-FINAL berjalan di port ${PORT}`);
+    console.log(`🚀 Stealth Scraper dengan Sistem Antrian berjalan di port ${PORT}`);
 });
