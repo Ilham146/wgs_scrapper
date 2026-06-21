@@ -1,19 +1,13 @@
 const express = require('express');
 const cors = require('cors');
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-
-// Aktifkan Stealth Plugin agar tidak mudah terdeteksi Cloudflare
 puppeteer.use(StealthPlugin());
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// Route untuk melihat screenshot jika terjadi error (DEBUGGING)
-app.get('/lihat-error', (req, res) => {
-    res.sendFile(__dirname + '/error-screenshot.png');
-});
 
 app.post('/api/cek-akun', async (req, res) => {
     const { game_name, account_id, server_id } = req.body;
@@ -21,25 +15,27 @@ app.post('/api/cek-akun', async (req, res) => {
     if (!account_id) return res.status(400).json({ success: false, message: "ID kosong" });
 
     let targetUrl = '';
-    const inputSelector = 'input[placeholder="Masukkan User ID"]'; // Selektor universal Tokogame
-    
-    // Konfigurasi target
+    let inputSelector = 'input[placeholder="Masukkan User ID"]';
+
     if (game_name.includes('royal')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/royal-dream-coins-chips'; 
-    } else if (game_name.includes('higgs') || game_name.includes('island')) {
-        targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-resmi'; 
-    } else {
-        return res.json({ success: false, is_manual: true, message: "Game tidak didukung." });
+    } 
+    else if (game_name.includes('higgs') || game_name.includes('island')) {
+        targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-emas'; 
+    } 
+    else {
+        return res.json({ success: false, is_manual: true, message: "Game tidak didukung otomatis." });
     }
 
     let browser;
-    let page;
+    let page; 
     
     try {
-        console.log(`[START] Scraping ${game_name} | ID: ${account_id} (FAST MODE)`);
+        console.log(`\n[TURBO] Scraping ${game_name} | ID: ${account_id}`);
+        const startTime = Date.now();
 
         browser = await puppeteer.launch({ 
-            headless: "new",
+            headless: true, 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
@@ -47,84 +43,89 @@ app.post('/api/cek-akun', async (req, res) => {
                 '--disable-blink-features=AutomationControlled'
             ]
         });
-        
         page = await browser.newPage();
+        
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // Optimasi: Blokir request gambar/media/font agar web Tokogame jauh lebih ringan & cepat
+        // OPTIMASI: Blokir aset statis agar loading web instan
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            if(['image', 'media', 'font'].includes(req.resourceType())) req.abort();
-            else req.continue();
+            if(['image', 'media', 'font'].includes(req.resourceType())){
+                req.abort();
+            } else {
+                req.continue();
+            }
         });
 
-        console.log(`Bypass Cloudflare menuju: ${targetUrl}`);
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        // OPTIMASI: domcontentloaded (Langsung hajar begitu HTML dasar muncul)
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         
-        // 1. Ketik ID dengan simulasi keyboard (Anti-Bot Check)
-        await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
-        await new Promise(r => setTimeout(r, 1000));
+        await page.waitForSelector(inputSelector, { visible: true, timeout: 10000 });
         
-        await page.evaluate((sel) => {
-            const inputs = document.querySelectorAll(sel);
-            for (let el of inputs) {
-                if (el.offsetWidth > 0 && el.offsetHeight > 0) {
-                    el.focus(); el.click(); el.value = ''; return;
-                }
-            }
-        }, inputSelector);
+        // JEDA WAJIB 500ms: Membiarkan React Hydration selesai agar ketikan bot tidak dianggap render awal
+        await new Promise(r => setTimeout(r, 500)); 
+
+        await page.focus(inputSelector);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('A');
+        await page.keyboard.up('Control');
+        await page.keyboard.press('Backspace'); 
+
+        // OPTIMASI: Ketik turbo (10ms per huruf)
+        await page.type(inputSelector, account_id, { delay: 10 });
         
-        await page.keyboard.type(account_id, { delay: 50 });
-        await new Promise(r => setTimeout(r, 1000));
+        // Tekan TAB untuk memicu pencarian (Logika yang terbukti berhasil)
+        await page.keyboard.press('Tab');
         
-        // 2. Klik layar untuk memicu Tokogame memproses input
-        console.log('Mengklik layar untuk memicu pengecekan...');
-        await page.mouse.click(10, 10);
-        await page.click('body');
-        
-        // 3. Smart Polling: Tunggu popup muncul, cek setiap 500ms
-        console.log('Menunggu popup konfirmasi...');
-        await page.waitForSelector('.swal2-popup', { timeout: 15000 });
-        
+        // OPTIMASI: Smart Polling 200ms (Sangat agresif mengecek popup)
         let accountName = '';
-        for(let i = 0; i < 15; i++) { // Max coba cek 15 kali (7.5 detik)
-            await new Promise(r => setTimeout(r, 500));
+        let loopCount = 0;
+        
+        while (loopCount < 25) { 
+            await new Promise(r => setTimeout(r, 200)); 
+            
             accountName = await page.evaluate(() => {
                 const popup = document.querySelector('.swal2-popup');
-                if (!popup) return '';
-                const text = popup.innerText || '';
-                
-                // Jika masih ada kata "Mencari", berarti masih loading
-                if (text.toLowerCase().includes('mencari')) return 'LOADING';
-                
-                const lines = text.split('\n');
-                for (let line of lines) {
-                    if (line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) {
-                        let parts = line.split(':');
-                        if (parts.length > 1) return parts[1].trim();
+                if (popup) {
+                    const text = popup.innerText || '';
+                    if (text.toLowerCase().includes('mencari') || text.toLowerCase().includes('loading')) return 'LOADING';
+                    
+                    const lines = text.split('\n');
+                    for (let line of lines) {
+                        if (line.toLowerCase().includes('username') || line.toLowerCase().includes('nama')) {
+                            let parts = line.split(':'); 
+                            if (parts.length > 1) return parts[1].trim(); 
+                        }
                     }
+                    return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
                 }
-                return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
+                return '';
             });
-            
-            // Jika sudah dapat nama yang valid, langsung break loop
-            if (accountName !== 'LOADING' && accountName !== '') break;
+
+            if (accountName !== 'LOADING' && accountName !== '') break; 
+            loopCount++;
         }
         
-        if (accountName === 'LOADING' || accountName === '') throw new Error('Gagal memuat nama.');
+        if (accountName === 'LOADING' || accountName === '') {
+            throw new Error('Nama gagal termuat dari popup.');
+        }
         
-        console.log(`[BERHASIL] Nama ditemukan: ${accountName}`);
-        res.json({ success: true, account_name: accountName, is_manual: false });
+        const timeTaken = ((Date.now() - startTime) / 1000).toFixed(2);
+        console.log(`[BERHASIL] Nama: ${accountName} (Selesai dalam ${timeTaken} detik)`);
 
+        res.json({ success: true, account_name: accountName, is_manual: false });
+        
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
-        if (page) await page.screenshot({ path: 'error-screenshot.png' });
-        res.json({ success: false, is_manual: true, message: "Sistem antri/sibuk." });
+        res.json({ success: false, is_manual: true, message: "Gagal cek akun. ID salah atau timeout." });
     } finally {
-        if (browser) await browser.close();
-        console.log('[SELESAI] Browser ditutup.');
+        if (browser) {
+            await browser.close();
+        }
     }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`🚀 Stealth Scraper WGS berjalan di port ${PORT}`));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Stealth Scraper Turbo berjalan di port ${PORT}`);
+});
