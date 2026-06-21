@@ -10,6 +10,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Route untuk melihat screenshot jika terjadi error
 app.get('/lihat-error', (req, res) => {
     res.sendFile(__dirname + '/error-screenshot.png');
 });
@@ -63,27 +64,25 @@ app.post('/api/cek-akun', async (req, res) => {
         // Randomize User-Agent agar terlihat seperti pengguna PC Windows biasa
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // Blokir gambar/css/font agar loading web Tokogame jauh lebih cepat
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if(['image', 'stylesheet', 'font'].includes(req.resourceType())){
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
-
         console.log(`Bypass Cloudflare menuju: ${targetUrl}`);
-        // Tunggu domcontentloaded agar tidak perlu menunggu tracking web Tokogame selesai
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // Menunggu web benar-benar selesai loading (networkidle2) agar fitur ketik tidak error
+        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
         
         // 1. Tunggu dan Ketik ID
         console.log('Menunggu elemen input ID...');
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
-        await page.type(inputSelector, account_id);
+        await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-        // Jeda 1 detik agar script Tokogame mendeteksi bahwa ada ID yang diketik
-        await new Promise(r => setTimeout(r, 1000));
+        // Jeda 2 detik agar sistem website Tokogame siap sepenuhnya menerima input
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Klik kolom input terlebih dahulu untuk mengaktifkannya
+        await page.click(inputSelector);
+        
+        // Ketik pelan-pelan dengan jeda 100ms per huruf seperti manusia sungguhan
+        await page.type(inputSelector, account_id, { delay: 100 });
+        
+        // Jeda 2 detik agar Tokogame memproses ketikan ID tersebut
+        await new Promise(r => setTimeout(r, 2000));
         
         // 2. Klik tombol kotak nominal dengan Javascript Evaluation (Anti-Gagal)
         console.log('Mengklik kotak nominal...');
