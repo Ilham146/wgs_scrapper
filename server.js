@@ -107,8 +107,21 @@ app.post('/api/cek-akun', async (req, res) => {
             return '';
         }, inputSelector);
         console.log(`[INFO] ID di layar saat ini: ${idTerisi}`);
-        // 2. Klik tombol kotak nominal dengan Javascript Evaluation (Anti-Gagal)
-        console.log('Mengklik kotak nominal...');
+       // 2. Klik sembarang di layar untuk memicu Tokogame memunculkan popup
+        console.log('Mengklik layar untuk memicu pengecekan nama...');
+        
+        // 1. Klik koordinat kosong di pojok kiri atas (seperti menyentuh layar sembarang)
+        await page.mouse.click(10, 10);
+        
+        // 2. Klik elemen background utama (body)
+        await page.click('body');
+
+        // 3. (Cadangan) Klik judul Koin Emas menggunakan native click Puppeteer
+        try {
+            await page.click(btnSelector);
+        } catch (e) {
+            // Abaikan jika tidak bisa diklik
+        }
         
         // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
         // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
