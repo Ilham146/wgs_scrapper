@@ -22,7 +22,6 @@ app.post('/api/cek-akun', async (req, res) => {
 
     let targetUrl = '';
     let inputSelector = '';
-    let btnSelector = '';
 
     // ==========================================
     // 1. KONFIGURASI ROYAL DREAM (VIA TOKOGAME)
@@ -30,7 +29,6 @@ app.post('/api/cek-akun', async (req, res) => {
     if (game_name.includes('royal')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/royal-dream-coins-chips'; 
         inputSelector = 'input[placeholder="Masukkan User ID"]';            
-        btnSelector = 'h2[id="Koin Emas"]';                                  
     } 
     // ==========================================
     // 2. KONFIGURASI HIGGS DOMINO (VIA TOKOGAME)
@@ -38,20 +36,19 @@ app.post('/api/cek-akun', async (req, res) => {
     else if (game_name.includes('higgs') || game_name.includes('island')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-emas'; 
         inputSelector = 'input[placeholder="Masukkan User ID"]';
-        btnSelector = 'h2[id="Kartu Emas (Tukar ke Koin Emas)"]';
     } 
     else {
         return res.json({ success: false, is_manual: true, message: "Game tidak didukung otomatis." });
     }
 
     let browser;
-    let page; // Dideklarasikan di luar try agar bisa diakses oleh catch untuk screenshot
+    let page; 
     
     try {
         console.log(`\n[START] Scraping ${game_name} | ID: ${account_id}`);
 
         browser = await puppeteer.launch({ 
-            headless: true, // Gunakan true, bukan "new" (sudah deprecated)
+            headless: true, 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
@@ -77,7 +74,7 @@ app.post('/api/cek-akun', async (req, res) => {
         // WAJIB networkidle2 agar Cloudflare selesai memproses challenge-nya
         await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
         
-       // 1. Tunggu Elemen Input
+        // 1. Tunggu Elemen Input
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
@@ -86,11 +83,11 @@ app.post('/api/cek-akun', async (req, res) => {
         await page.evaluate((selector, id) => {
             const input = document.querySelector(selector);
             if (input) {
-                // Memotong jalur React State agar input bot terbaca sebagai input manusia
+                // Memotong jalur React State agar input bot terbaca
                 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                 nativeInputValueSetter.call(input, id);
                 
-                // Memicu event secara manual agar web sadar ada teks masuk
+                // Memicu event secara manual
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
             }
@@ -99,22 +96,20 @@ app.post('/api/cek-akun', async (req, res) => {
         // Beri jeda sejenak agar web selesai memproses state UI-nya
         await new Promise(r => setTimeout(r, 1000));
         
-        // Pancing dengan menekan tombol Spasi lalu Backspace untuk memastikan form "bangun"
+        // Pancing dengan Spasi lalu Backspace untuk memastikan form web mendeteksi input
         await page.focus(inputSelector);
         await page.keyboard.press('Space');
         await page.keyboard.press('Backspace');
         await page.keyboard.press('Enter');
 
-        // 3. KLIK KARTU/PAKET DENGAN CARA YANG LEBIH AMAN (CARI BERDASARKAN TEKS)
+        // 3. KLIK KARTU/PAKET (CARI BERDASARKAN TEKS)
         console.log('Mengklik kartu/area verifikasi...');
         await page.evaluate((game) => {
-            // Mencari teks yang spesifik di layar dan mengkliknya
-            const searchText = game.includes('higgs') ? 'Kartu Emas' : 'Koin Emas';
-            const allElements = document.querySelectorAll('h2, div, span, p'); // Cari di semua tag teks
+            const searchText = (game.includes('higgs') || game.includes('island')) ? 'Kartu Emas' : 'Koin Emas';
+            const allElements = document.querySelectorAll('h2, div, span, p');
             
             for (let el of allElements) {
                 if (el.innerText && el.innerText.includes(searchText)) {
-                    // Klik elemen terdekat yang bisa diklik (biasanya parent-nya)
                     if (el.parentElement) el.parentElement.click();
                     el.click();
                     return;
@@ -122,8 +117,20 @@ app.post('/api/cek-akun', async (req, res) => {
             }
         }, game_name);
 
-        // Jeda untuk menunggu animasi klik selesai sebelum mencari popup
-        await new Promise(r => setTimeout(r, 1000));
+        // Jeda untuk menunggu animasi web selesai sebelum mencari popup
+        await new Promise(r => setTimeout(r, 1500));
+        
+        // 4. Tunggu popup SweetAlert2 muncul
+        console.log('Menunggu popup konfirmasi...');
+        await page.waitForSelector('.swal2-popup', { visible: true, timeout: 15000 });
+        
+        // 5. SMART POLLING (Cek nama setiap 0.5 detik)
+        console.log('Mengekstrak nama akun...');
+        let accountName = '';
+        let loopCount = 0;
+        
+        while (loopCount < 15) { 
+            await new Promise(r => setTimeout(r, 500));
             
             accountName = await page.evaluate(() => {
                 const popup = document.querySelector('.swal2-popup');
@@ -131,7 +138,6 @@ app.post('/api/cek-akun', async (req, res) => {
                 
                 const text = popup.innerText || '';
                 
-                // Jika masih ada kata "Mencari" atau "Loading", beri kode agar loop terus berjalan
                 if (text.toLowerCase().includes('mencari') || text.toLowerCase().includes('loading')) {
                     return 'LOADING';
                 }
@@ -143,18 +149,15 @@ app.post('/api/cek-akun', async (req, res) => {
                         if (parts.length > 1) return parts[1].trim(); 
                     }
                 }
-                // Fallback jika format web tidak menggunakan titik dua (:)
                 return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
             });
 
-            // Jika bot berhasil mendapat nama selain "LOADING" atau kosong, langsung hentikan loop
             if (accountName !== 'LOADING' && accountName !== '') {
                 break; 
             }
             loopCount++;
         }
         
-        // Jika nama gagal didapat dan masih "LOADING" setelah 7.5 detik
         if (accountName === 'LOADING' || accountName === '') {
             throw new Error('Nama gagal termuat atau ID tidak ditemukan di server game.');
         }
@@ -166,7 +169,6 @@ app.post('/api/cek-akun', async (req, res) => {
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
         
-        // Ambil screenshot jika terjadi error untuk proses debugging
         if (page) {
             try {
                 await page.screenshot({ path: 'error-screenshot.png' });
