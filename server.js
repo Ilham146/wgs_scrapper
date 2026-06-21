@@ -66,39 +66,51 @@ app.post('/api/cek-akun', async (req, res) => {
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-        // 2. KETIK DENGAN VERIFIKASI LOOP
-        console.log('Mencoba mengetik ID ke form...');
-        let inputSuccess = false;
-
-        for (let i = 0; i < 3; i++) {
-            await page.focus(inputSelector);
-            await new Promise(r => setTimeout(r, 500)); 
-
-            // Hapus isi form jika ada
-            await page.click(inputSelector, { clickCount: 3 });
-            await page.keyboard.press('Backspace'); 
-            await new Promise(r => setTimeout(r, 300));
-
-            // Ketik ID
-            await page.type(inputSelector, account_id, { delay: 100 });
-
-            // Verifikasi input
-            const typedValue = await page.$eval(inputSelector, el => el.value);
-            console.log(`[Cek ${i+1}] Web membaca input sebagai: "${typedValue}"`);
-
-            if (typedValue === account_id) {
-                inputSuccess = true;
-                break; 
+       // 2. KETIK ID DENGAN BYPASS REACT STATE (ANTI-HAPUS)
+        console.log('Mencoba mengetik ID dan mengunci state...');
+        
+        await page.waitForSelector(inputSelector, { visible: true });
+        await page.focus(inputSelector);
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Eksekusi injeksi native untuk memaksa React menerima input bot
+        await page.evaluate((sel, id) => {
+            const el = document.querySelector(sel);
+            if (el) {
+                // Trik mem-bypass internal tracker React
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                nativeInputValueSetter.call(el, id);
+                
+                // Tembakkan event seolah-olah ada ketikan nyata
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
             }
+        }, inputSelector, account_id);
+
+        // Lakukan pancingan fisik agar UI benar-benar merespons
+        await page.focus(inputSelector);
+        await page.keyboard.press('Space');
+        await page.keyboard.press('Backspace');
+        
+        // TEKAN ENTER: Langkah krusial untuk mengunci input di form modern
+        await page.keyboard.press('Enter');
+        await new Promise(r => setTimeout(r, 1000));
+
+        // Verifikasi terakhir sebelum klik keluar
+        const finalValue = await page.$eval(inputSelector, el => el.value);
+        console.log(`[Verifikasi] Web berhasil mengunci input sebagai: "${finalValue}"`);
+
+        if (!finalValue) {
+             throw new Error('Gagal: Web kembali menghapus input bot.');
         }
 
-        if (!inputSuccess) {
-            throw new Error('Gagal memasukkan ID, form di-reset oleh website.');
-        }
-
-        // 3. KLIK SEMBARANG DI LAYAR UNTUK MEMICU POPUP
+        // 3. KLIK SEMBARANG UNTUK MEMICU POPUP NAMA
         console.log('Mengklik sembarang (body) untuk memicu pencarian nama...');
-        // Klik di koordinat aman (kiri atas) agar tidak salah klik banner
+        // Gunakan Tab untuk memindahkan fokus secara natural sebelum klik
+        await page.keyboard.press('Tab'); 
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Klik koordinat aman di pojok atas, lalu klik body
         await page.mouse.click(10, 10); 
         await page.click('body');
         
