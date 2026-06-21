@@ -76,7 +76,6 @@ app.post('/api/cek-akun', async (req, res) => {
         let accountName = '';
         let loopCount = 0;
         
-        // Polling respons API Tokogame
         while (loopCount < 40) { 
             await new Promise(r => setTimeout(r, 200)); 
             
@@ -88,9 +87,21 @@ app.post('/api/cek-akun', async (req, res) => {
                     
                     if (textLower.includes('mencari') || textLower.includes('loading')) return 'LOADING';
                     
-                    // DETEKSI ERROR DARI TOKOGAME: Jika web bilang salah/tidak ketemu, tangkap pesannya!
-                    if (textLower.includes('tidak ditemukan') || textLower.includes('salah') || textLower.includes('gagal') || textLower.includes('not found') || textLower.includes('format')) {
-                        return 'ERROR_WEB:' + text.replace(/\n/g, ' ').trim();
+                    // ==========================================
+                    // DETEKSI ERROR BERDASARKAN CLASS HTML (BARU)
+                    // ==========================================
+                    const isInfoIcon = popup.querySelector('.swal2-info');
+                    const isErrorIcon = popup.querySelector('.swal2-error');
+                    
+                    if (isInfoIcon || isErrorIcon || textLower.includes('tidak ditemukan') || textLower.includes('salah') || textLower.includes('gagal')) {
+                        // Bersihkan teks (terkadang popup error hanya berisi teks "i" dari ikon info)
+                        let errMsg = text.replace(/\n/g, ' ').trim();
+                        if (!errMsg || errMsg === 'i' || errMsg === 'x' || errMsg === '!') {
+                            errMsg = "ID Pemain tidak ditemukan / Format salah.";
+                        } else if (errMsg.startsWith('i ')) {
+                            errMsg = errMsg.substring(2); // Buang huruf 'i' dari awal pesan
+                        }
+                        return 'ERROR_WEB:' + errMsg;
                     }
 
                     const lines = text.split('\n');
@@ -109,7 +120,6 @@ app.post('/api/cek-akun', async (req, res) => {
                     const txt = el.innerText || '';
                     const txtLower = txt.toLowerCase();
 
-                    // Deteksi Error di teks biasa
                     if (txtLower.includes('tidak ditemukan') && (txtLower.includes('id') || txtLower.includes('pemain'))) {
                          return 'ERROR_WEB:' + txt.replace(/\n/g, ' ').trim();
                     }
@@ -131,10 +141,12 @@ app.post('/api/cek-akun', async (req, res) => {
             loopCount++;
         }
         
-        // TANGANI ERROR SPESIFIK DARI WEBSITE
+        // ==========================================
+        // TANGANI ERROR YANG DITANGKAP DARI WEBSITE
+        // ==========================================
         if (accountName.startsWith('ERROR_WEB:')) {
             const pesanError = accountName.replace('ERROR_WEB:', '');
-            throw new Error(`Ditolak oleh Tokogame: ${pesanError}`);
+            throw new Error(`Ditolak: ${pesanError}`);
         }
 
         if (accountName === 'LOADING' || accountName === '') {
@@ -148,8 +160,17 @@ app.post('/api/cek-akun', async (req, res) => {
         
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
-        // Kirim response error yang lebih informatif ke frontend Anda
-        res.json({ success: false, is_manual: true, message: error.message.includes('Ditolak') ? error.message : "Gagal cek akun. Sistem sibuk atau timeout." });
+        
+        // Cek apakah errornya karena ID salah (ditolak web) atau karena Timeout/Sibuk
+        const isDitolak = error.message.includes('Ditolak');
+        
+        res.json({ 
+            success: false, 
+            is_manual: !isDitolak, // Input manual HANYA aktif jika BUKAN karena ditolak (artinya server sibuk)
+            message: isDitolak 
+                ? "ID Anda salah, silakan cek kembali ID Anda." 
+                : "Sistem sedang sibuk, silakan input manual username Anda." 
+        });
     } finally {
         if (browser) {
             await browser.close();
