@@ -77,36 +77,53 @@ app.post('/api/cek-akun', async (req, res) => {
         // WAJIB networkidle2 agar Cloudflare selesai memproses challenge-nya
         await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
         
-        // 1. Tunggu Elemen Input
+       // 1. Tunggu Elemen Input
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-        // 2. Fokus dan Ketik ID secara natural
-        console.log('Mengetik ID...');
-        await page.click(inputSelector, { clickCount: 3 }); // Blokir teks lama jika ada
-        await page.type(inputSelector, account_id, { delay: 120 }); // Delay 120ms agar aman dari deteksi bot
+        // 2. FOKUS DAN INJEKSI ID (REACT-SAFE BYPASS)
+        console.log('Menginjeksi ID ke dalam sistem web...');
+        await page.evaluate((selector, id) => {
+            const input = document.querySelector(selector);
+            if (input) {
+                // Memotong jalur React State agar input bot terbaca sebagai input manusia
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                nativeInputValueSetter.call(input, id);
+                
+                // Memicu event secara manual agar web sadar ada teks masuk
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, inputSelector, account_id);
+
+        // Beri jeda sejenak agar web selesai memproses state UI-nya
+        await new Promise(r => setTimeout(r, 1000));
         
-        // 3. Klik area verifikasi atau sembarang di layar
-        console.log('Memproses input...');
-        if (btnSelector) {
-            // Tunggu sebentar untuk memastikan tombol bisa diklik
-            await page.waitForSelector(btnSelector, { visible: true, timeout: 5000 }).catch(() => {});
-            await page.click(btnSelector).catch(() => page.click('body'));
-        } else {
-            await page.click('body');
-        }
-        
-        // 4. Tunggu popup SweetAlert2 muncul
-        console.log('Menunggu popup konfirmasi...');
-        await page.waitForSelector('.swal2-popup', { visible: true, timeout: 15000 });
-        
-        // 5. SMART POLLING (Cek nama setiap 0.5 detik tanpa hard delay)
-        console.log('Mengekstrak nama akun...');
-        let accountName = '';
-        let loopCount = 0;
-        
-        while (loopCount < 15) { // Maksimal 15 x 500ms = 7.5 detik pencarian
-            await new Promise(r => setTimeout(r, 500));
+        // Pancing dengan menekan tombol Spasi lalu Backspace untuk memastikan form "bangun"
+        await page.focus(inputSelector);
+        await page.keyboard.press('Space');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Enter');
+
+        // 3. KLIK KARTU/PAKET DENGAN CARA YANG LEBIH AMAN (CARI BERDASARKAN TEKS)
+        console.log('Mengklik kartu/area verifikasi...');
+        await page.evaluate((game) => {
+            // Mencari teks yang spesifik di layar dan mengkliknya
+            const searchText = game.includes('higgs') ? 'Kartu Emas' : 'Koin Emas';
+            const allElements = document.querySelectorAll('h2, div, span, p'); // Cari di semua tag teks
+            
+            for (let el of allElements) {
+                if (el.innerText && el.innerText.includes(searchText)) {
+                    // Klik elemen terdekat yang bisa diklik (biasanya parent-nya)
+                    if (el.parentElement) el.parentElement.click();
+                    el.click();
+                    return;
+                }
+            }
+        }, game_name);
+
+        // Jeda untuk menunggu animasi klik selesai sebelum mencari popup
+        await new Promise(r => setTimeout(r, 1000));
             
             accountName = await page.evaluate(() => {
                 const popup = document.querySelector('.swal2-popup');
