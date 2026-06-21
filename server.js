@@ -29,7 +29,7 @@ app.post('/api/cek-akun', async (req, res) => {
     // ==========================================
     if (game_name.includes('royal')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/royal-dream-coins-chips'; 
-        inputSelector = 'input[name="userid"]';              
+        inputSelector = 'input[placeholder="Masukkan User ID"]';           
         btnSelector = 'h2[id="Koin Emas"]';                                  
     } 
     // ==========================================
@@ -37,7 +37,7 @@ app.post('/api/cek-akun', async (req, res) => {
     // ==========================================
     else if (game_name.includes('higgs') || game_name.includes('island')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-resmi'; 
-        inputSelector = 'input[name="userid"]';
+        inputSelector = 'input[placeholder="Masukkan User ID"]';
         btnSelector = 'h2[id="Kartu Emas (Tukar ke Koin Emas)"]';
     } 
     else {
@@ -72,28 +72,36 @@ app.post('/api/cek-akun', async (req, res) => {
         console.log('Menunggu elemen input ID...');
         await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
         
-        // Jeda 2 detik agar sistem website Tokogame siap sepenuhnya menerima input
         await new Promise(r => setTimeout(r, 2000));
         
-        // Klik kolom input terlebih dahulu untuk mengaktifkannya
-        await page.click(inputSelector);
-        
-        // Ketik pelan-pelan dengan jeda 100ms per huruf seperti manusia sungguhan
-        await page.type(inputSelector, account_id, { delay: 100 });
+        // CARA ULTIMATE: Memaksa React JS menerima input ID menggunakan JavaScript
+        console.log('Menyuntikkan ID ke dalam sistem web...');
+        await page.evaluate((selector, idText) => {
+            const input = document.querySelector(selector);
+            if (input) {
+                // Set nilai secara langsung
+                input.value = idText;
+                
+                // Hack khusus mem-bypass React agar tombol menyala
+                const tracker = input._valueTracker;
+                if (tracker) {
+                    tracker.setValue('');
+                }
+                // Pancing event internal website agar sadar ada teks yang masuk
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, inputSelector, account_id);
         
         // Jeda 2 detik agar Tokogame memproses ketikan ID tersebut
         await new Promise(r => setTimeout(r, 2000));
         
+        // (Opsional) Cek di terminal apakah ID benar-benar terisi
+        const idTerisi = await page.$eval(inputSelector, el => el.value);
+        console.log(`[INFO] ID di layar saat ini: ${idTerisi}`);
+        
         // 2. Klik tombol kotak nominal dengan Javascript Evaluation (Anti-Gagal)
         console.log('Mengklik kotak nominal...');
-        await page.evaluate((selector) => {
-            const element = document.querySelector(selector);
-            if (element) {
-                element.click();
-            } else {
-                throw new Error(`Tombol nominal ${selector} tidak ditemukan!`);
-            }
-        }, btnSelector);
         
         // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
         // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
