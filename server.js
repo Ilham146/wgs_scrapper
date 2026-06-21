@@ -74,32 +74,39 @@ app.post('/api/cek-akun', async (req, res) => {
         
         await new Promise(r => setTimeout(r, 2000));
         
-        // CARA ULTIMATE: Memaksa React JS menerima input ID menggunakan JavaScript
-        console.log('Menyuntikkan ID ke dalam sistem web...');
-        await page.evaluate((selector, idText) => {
-            const input = document.querySelector(selector);
-            if (input) {
-                // Set nilai secara langsung
-                input.value = idText;
-                
-                // Hack khusus mem-bypass React agar tombol menyala
-                const tracker = input._valueTracker;
-                if (tracker) {
-                    tracker.setValue('');
+        console.log('Memastikan fokus pada kotak input yang terlihat di layar...');
+        // Cari elemen yang visible, kosongkan, dan fokuskan
+        await page.evaluate((sel) => {
+            const inputs = document.querySelectorAll(sel);
+            for (let el of inputs) {
+                // Cek apakah elemen ini benar-benar tampil di layar (tidak disembunyikan)
+                if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+                    el.focus();
+                    el.click();
+                    el.value = ''; // Kosongkan isi jika ada
+                    return; // Hentikan loop setelah menemukan yang visible
                 }
-                // Pancing event internal website agar sadar ada teks yang masuk
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
             }
-        }, inputSelector, account_id);
+        }, inputSelector);
+        
+        // Ketik langsung menggunakan simulasi Keyboard (Sangat akurat dan anti-React block)
+        console.log('Mengetik ID menggunakan simulasi keyboard...');
+        await page.keyboard.type(account_id, { delay: 150 });
         
         // Jeda 2 detik agar Tokogame memproses ketikan ID tersebut
         await new Promise(r => setTimeout(r, 2000));
         
-        // (Opsional) Cek di terminal apakah ID benar-benar terisi
-        const idTerisi = await page.$eval(inputSelector, el => el.value);
+        // Cek di terminal apakah ID benar-benar terisi di kotak yang visible
+        const idTerisi = await page.evaluate((sel) => {
+            const inputs = document.querySelectorAll(sel);
+            for (let el of inputs) {
+                if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+                    return el.value;
+                }
+            }
+            return '';
+        }, inputSelector);
         console.log(`[INFO] ID di layar saat ini: ${idTerisi}`);
-        
         // 2. Klik tombol kotak nominal dengan Javascript Evaluation (Anti-Gagal)
         console.log('Mengklik kotak nominal...');
         
