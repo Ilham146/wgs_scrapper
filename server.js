@@ -96,11 +96,13 @@ app.post('/api/cek-akun', async (req, res) => {
         }, btnSelector);
         
         // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
+        // 3. Tunggu popup SweetAlert2 muncul secara keseluruhan
         console.log('Menunggu popup konfirmasi nama muncul...');
         await page.waitForSelector('.swal2-popup', { timeout: 15000 });
         
-        // Jeda setengah detik agar animasi popup selesai dan teks termuat sempurna
-        await new Promise(r => setTimeout(r, 500));
+        // Jeda 4 detik agar web Tokogame selesai mencari nama dan teks loading hilang
+        console.log('Menunggu web memuat nama asli...');
+        await new Promise(r => setTimeout(r, 4000));
         
         // 4. Ekstrak nama dari seluruh teks di dalam popup
         const accountName = await page.evaluate(() => {
