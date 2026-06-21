@@ -23,9 +23,12 @@ app.post('/api/cek-akun', async (req, res) => {
     // ==========================================
     // 1. KONFIGURASI ROYAL DREAM (VIA TOKOGAME)
     // ==========================================
+    // ==========================================
+    // 1. KONFIGURASI ROYAL DREAM (VIA TOKOGAME)
+    // ==========================================
     if (game_name.includes('royal')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/royal-dream-coins-chips'; 
-        inputSelector = '#userId';              
+        inputSelector = 'input[name="userid"]'; // <--- INI YANG BENAR           
         btnSelector = '[id="Koin Emas"]';                 
         resultSelector = '#swal2-title';                 
     } 
@@ -34,7 +37,7 @@ app.post('/api/cek-akun', async (req, res) => {
     // ==========================================
     else if (game_name.includes('higgs') || game_name.includes('island')) {
         targetUrl = 'https://www.tokogame.com/id-id/digital/higgs-domino-koin-resmi'; 
-        inputSelector = '#userId';
+        inputSelector = 'input[name="userid"]';
         btnSelector = '[id="Kartu Emas (Tukar ke Koin Emas)"]';
         resultSelector = '#swal2-title';
     } 
