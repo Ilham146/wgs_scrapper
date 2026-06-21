@@ -32,7 +32,7 @@ app.post('/api/cek-akun', async (req, res) => {
     
     try {
         const startTime = Date.now();
-        console.log(`\n[TURBO-V2] Scraping ${game_name} | ID: ${account_id}`);
+        console.log(`\n[TURBO-V3] Scraping ${game_name} | ID: ${account_id}`);
 
         browser = await puppeteer.launch({ 
             headless: true, 
@@ -47,19 +47,16 @@ app.post('/api/cek-akun', async (req, res) => {
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if(['image', 'media', 'font'].includes(req.resourceType())){
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
-
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForSelector(inputSelector, { visible: true, timeout: 10000 });
+        // FITUR BLOKIR GAMBAR DIHAPUS AGAR CLOUDFLARE API TIDAK CURIGA
         
-        await new Promise(r => setTimeout(r, 500)); 
+        console.log('Menuju situs...');
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        
+        // Tunggu form muncul
+        await page.waitForSelector(inputSelector, { visible: true, timeout: 15000 });
+        
+        // Jeda untuk memastikan React Hydration dan background script Cloudflare selesai
+        await new Promise(r => setTimeout(r, 1200)); 
 
         console.log('[1/3] Mengetik ID...');
         await page.focus(inputSelector);
@@ -68,16 +65,16 @@ app.post('/api/cek-akun', async (req, res) => {
         await page.keyboard.up('Control');
         await page.keyboard.press('Backspace'); 
 
-        // Sedikit dilambatkan dari 30ms ke 50ms agar React UI merespons
-        await page.type(inputSelector, account_id, { delay: 50 });
+        // Ketik dengan kecepatan semi-turbo
+        await page.type(inputSelector, account_id, { delay: 40 });
         
         const checkValue = await page.$eval(inputSelector, el => el.value);
         if (checkValue !== account_id) {
             throw new Error('Ketikan ditolak oleh sistem web.');
         }
 
-        // JEDA KRUSIAL: Beri napas 500ms agar event onChange React selesai diproses sebelum di-Blur
-        await new Promise(r => setTimeout(r, 500)); 
+        // Jeda agar state React tersimpan sebelum form kehilangan fokus
+        await new Promise(r => setTimeout(r, 400)); 
 
         console.log('[2/3] Meminta data ke server...');
         await page.keyboard.press('Tab');
@@ -86,8 +83,7 @@ app.post('/api/cek-akun', async (req, res) => {
         let accountName = '';
         let loopCount = 0;
         
-        // POLLING DIPERPANJANG: 40 x 200ms = Maksimal 8 detik menunggu API web
-        // Jika nama muncul di detik ke-1, loop akan langsung berhenti.
+        // Polling cepat: Maksimal tunggu 8 detik (40 x 200ms)
         while (loopCount < 40) { 
             await new Promise(r => setTimeout(r, 200)); 
             
@@ -106,6 +102,7 @@ app.post('/api/cek-akun', async (req, res) => {
                     return lines.length > 1 ? lines[1].trim() : text.replace(/\n/g, ' ').trim();
                 }
 
+                // Fallback pencarian teks biasa jika desain web berubah
                 const allDivs = document.querySelectorAll('div, span, p, b, strong');
                 for (let el of allDivs) {
                     const txt = el.innerText || '';
@@ -147,5 +144,5 @@ app.post('/api/cek-akun', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Stealth Scraper Turbo-V2 berjalan di port ${PORT}`);
+    console.log(`🚀 Stealth Scraper Turbo-V3 berjalan di port ${PORT}`);
 });
