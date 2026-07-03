@@ -10,13 +10,38 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// VARIABEL GLOBAL BROWSER & ANTRIAN
+// VARIABEL GLOBAL BROWSER, ANTRIAN, & STATISTIK
 // ==========================================
-let browser; // Menyimpan instance browser agar tidak buka-tutup terus
+let browser; 
 let isScraping = false;
 const requestQueue = [];
 
-// Fungsi untuk inisialisasi browser saat server menyala
+// 🚀 FITUR BARU: Objek untuk menyimpan statistik kinerja bot
+const botStats = {
+    server_started: new Date().toLocaleString('id-ID'),
+    total_request: 0,
+    success_count: 0,
+    error_bot_count: 0, // Gagal karena timeout/selector berubah
+    error_user_count: 0 // Gagal karena ID salah dari sananya
+};
+
+// ==========================================
+// ROUTE UNTUK MELIHAT STATISTIK (EVALUASI)
+// ==========================================
+app.get('/api/stats', (req, res) => {
+    const successRate = botStats.total_request === 0 ? 0 : ((botStats.success_count / botStats.total_request) * 100).toFixed(1);
+    const botErrorRate = botStats.total_request === 0 ? 0 : ((botStats.error_bot_count / botStats.total_request) * 100).toFixed(1);
+
+    res.json({
+        success: true,
+        data: {
+            ...botStats,
+            success_rate: `${successRate}%`,
+            bot_error_rate: `${botErrorRate}%`
+        }
+    });
+});
+
 const initBrowser = async () => {
     try {
         console.log('[SISTEM] Memulai browser...');
@@ -31,7 +56,6 @@ const initBrowser = async () => {
         });
         console.log('[SISTEM] Browser berhasil diluncurkan dan siap menerima request.');
         
-        // Jaga-jaga jika browser crash/tertutup sendiri, kita nyalakan ulang
         browser.on('disconnected', () => {
             console.log('[SISTEM] Browser terputus! Melakukan restart...');
             initBrowser();
@@ -41,17 +65,10 @@ const initBrowser = async () => {
     }
 };
 
-// ==========================================
-// SISTEM ANTRIAN (QUEUE) ANTI-CRASH
-// ==========================================
 const processQueue = async () => {
-    // Jika bot sedang jalan, antrian kosong, atau browser belum siap, diam saja.
     if (isScraping || requestQueue.length === 0 || !browser) return;
     
-    // Kunci bot agar tidak menerima request ganda
     isScraping = true;
-    
-    // Ambil orang pertama di barisan antrian
     const { req, res } = requestQueue.shift();
     
     try {
@@ -61,7 +78,6 @@ const processQueue = async () => {
             res.json({ success: false, is_manual: true, message: "Terjadi kesalahan internal server." });
         }
     } finally {
-        // Buka kunci, lalu panggil orang selanjutnya di antrian
         isScraping = false;
         processQueue(); 
     }
@@ -71,20 +87,15 @@ app.post('/api/cek-akun', (req, res) => {
     const { account_id } = req.body;
     if (!account_id) return res.status(400).json({ success: false, message: "ID kosong" });
 
-    // Masukkan request ke dalam loket antrian
+    // 🚀 Update statistik total request
+    botStats.total_request++;
+
     requestQueue.push({ req, res });
     console.log(`[ANTRIAN] ID: ${account_id} masuk antrian. Menunggu giliran: ${requestQueue.length} request.`);
     
-    // Jalankan antrian
     processQueue();
 });
 
-// ==========================================
-// LOGIKA MESIN SCRAPER (TURBO-FINAL)
-// ==========================================
-// ==========================================
-// LOGIKA MESIN SCRAPER (TURBO-FINAL)
-// ==========================================
 const runScraper = async (req, res) => {
     const { game_name, account_id, server_id } = req.body;
 
@@ -148,8 +159,6 @@ const runScraper = async (req, res) => {
                     const isInfoIcon = popup.querySelector('.swal2-info');
                     const isErrorIcon = popup.querySelector('.swal2-error');
                     
-                    // --- BAGIAN YANG DIUBAH ---
-                    // Jika ada indikasi error dari Tokogame, langsung tembak pesan custom
                     if (isInfoIcon || isErrorIcon || textLower.includes('tidak ditemukan') || textLower.includes('salah') || textLower.includes('gagal')) {
                         return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
                     }
@@ -169,7 +178,6 @@ const runScraper = async (req, res) => {
                     const txt = el.innerText || '';
                     const txtLower = txt.toLowerCase();
 
-                    // --- BAGIAN YANG DIUBAH ---
                     if (txtLower.includes('tidak ditemukan') && (txtLower.includes('id') || txtLower.includes('pemain'))) {
                          return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
                     }
@@ -203,20 +211,33 @@ const runScraper = async (req, res) => {
         const timeTaken = ((Date.now() - startTime) / 1000).toFixed(2);
         console.log(`[BERHASIL] ${accountName} (Durasi total: ${timeTaken} detik)`);
 
+        // 🚀 Update statistik: Sukses
+        botStats.success_count++;
+
         res.json({ success: true, account_name: accountName, is_manual: false });
         
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
         const isDitolak = error.message.includes('Ditolak');
+        
+        // 🚀 Update statistik: Gagal
+        if (isDitolak) {
+            botStats.error_user_count++; // Gagal karena ID dari pembeli memang salah
+        } else {
+            botStats.error_bot_count++; // Gagal karena scraper timeout / ada perubahan web
+        }
+
         res.json({ 
             success: false, 
             is_manual: !isDitolak, 
-            // --- BAGIAN YANG DIUBAH ---
             message: isDitolak ? error.message.replace('Ditolak: ', '') : "Sistem sedang sibuk, silakan input manual username Anda." 
         });
     } finally {
         if (page && !page.isClosed()) {
             await page.close();
+            
+            // 🚀 Tampilkan rekap cepat di terminal setelah setiap request selesai
+            console.log(`[STATISTIK SEMENTARA] Req: ${botStats.total_request} | Sukses: ${botStats.success_count} | Error Bot: ${botStats.error_bot_count} | Error User: ${botStats.error_user_count}`);
             console.log(`[SELESAI] Tab ditutup. Lanjut antrian...\n`);
         }
     }
@@ -224,7 +245,6 @@ const runScraper = async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-    // Jalankan browser sesaat setelah server menyala
     await initBrowser();
     console.log(`🚀 Stealth Scraper Turbo dengan Sistem Antrian berjalan di port ${PORT}`);
 });
