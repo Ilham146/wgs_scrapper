@@ -208,28 +208,39 @@ const runScraper = async (req, res) => {
 
             // Fokus dan klik 3x untuk memblok seluruh teks bawaan, lalu hapus
             await targetInput.focus();
-            await targetInput.click({ clickCount: 3 });
+// Bersihkan input menggunakan metode seleksi natural
+            await targetInput.click();
+            await page.keyboard.down('Control');
+            await page.keyboard.press('A');
+            await page.keyboard.up('Control');
             await page.keyboard.press('Backspace');
+            await new Promise(r => setTimeout(r, 300));
 
-            // Ketik ID dengan tempo aman
-            await targetInput.type(account_id, { delay: 60 });
+            // Ketik ID dengan tempo yang pas untuk state React
+            await targetInput.type(account_id, { delay: 80 });
+            await new Promise(r => setTimeout(r, 500)); // Jeda agar React menyerap value
+
+            // [PERBAIKAN 3] Cek sinkronisasi. JANGAN gunakan nativeSetter!
+            let typedValue = await page.evaluate(el => el.value, targetInput);
+            if (typedValue !== account_id) {
+                console.log(`[KOREKSI] State belum sinkron. Mengetik ulang via Keyboard...`);
+                
+                // Bersihkan ulang secara manual
+                await targetInput.click();
+                await page.keyboard.down('Control');
+                await page.keyboard.press('A');
+                await page.keyboard.up('Control');
+                await page.keyboard.press('Backspace');
+                await new Promise(r => setTimeout(r, 400));
+                
+                // Ketik ulang dengan tempo lebih lambat agar tidak tertinggal lagi
+                await targetInput.type(account_id, { delay: 150 });
+                await new Promise(r => setTimeout(r, 500));
+            }
 
             // Trigger Pop-up
             await page.keyboard.press('Enter');
             await page.keyboard.press('Tab');
-            
-            // [PERBAIKAN 3] Cek ulang apakah form kosong setelah di-blur
-            const typedValue = await page.evaluate(el => el.value, targetInput);
-            if (typedValue !== account_id) {
-                console.log(`[KOREKSI] React menghapus input! Melakukan injeksi paksa...`);
-                await page.evaluate((el, idVal) => {
-                    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                    nativeSetter.call(el, idVal);
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.blur();
-                }, targetInput, account_id);
-            }
 
             // =================================================================
             // 3. EKSTRAKSI HASIL DINAMIS (WAKTU TUNGGU DIPERPANJANG)
