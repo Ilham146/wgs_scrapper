@@ -233,51 +233,83 @@ const runScraper = async (req, res) => {
             }
 
             // =================================================================
-            // [OPTIMASI LEVEL 1] JALUR CEPAT (NETWORK INTERCEPTION)
+            // [OPTIMASI LEVEL 1.5] JALUR CEPAT HYBRID (NETWORK + UI)
             // =================================================================
             
-            // 1. Pasang alat penyadap Network SEBELUM menekan Enter
-            const responsePromise = page.waitForResponse(
-                (response) => response.url().includes('/validate-order') && response.request().method() !== 'OPTIONS',
-                { timeout: 5000 }
-            ).catch(() => null);
+            // 1. Pasang penyadap Network (Berjalan di background tanpa memblokir bot)
+            let networkData = null;
+            let networkCaught = false;
+            
+            page.waitForResponse(
+                (response) => response.url().includes('/validate-order') && response.request().method() === 'GET',
+                { timeout: 6000 }
+            ).then(async (res) => {
+                networkData = await res.text();
+                networkCaught = true;
+            }).catch(() => {
+                networkCaught = 'TIMEOUT'; 
+            });
 
             // 2. Trigger pengiriman form
             await page.keyboard.press('Enter');
             await page.keyboard.press('Tab');
             
-            // 3. Bot langsung menangkap JSON (Mengabaikan UI pop-up di layar)
-            const apiResponse = await responsePromise;
+            // 3. Loop Pemantauan Cerdas (Mengecek API & Layar secara bersamaan)
+            await page.waitForSelector('.swal2-popup', { visible: true, timeout: 5000 });
 
-            if (!apiResponse) {
-                throw new Error('Timeout: API Tokogame lambat merespons atau terputus.');
+            for(let i = 0; i < 40; i++) { 
+                await new Promise(r => setTimeout(r, 150)); // Cek setiap 150 milidetik
+                
+                // Cek apakah API Network sudah menangkap JSON
+                if (networkCaught === true && networkData) {
+                    try {
+                        if (!networkData.trim().startsWith('<')) {
+                            const parsed = JSON.parse(networkData);
+                            if (parsed.code === "SUCCESS" && parsed.data && parsed.data.username) {
+                                accountName = parsed.data.username;
+                                break; // Langsung keluar dari loop
+                            } else {
+                                accountName = 'ERROR_WEB:ID Anda salah atau tidak ditemukan di API.';
+                                break;
+                            }
+                        }
+                    } catch(e) {} // Abaikan jika error parse, biarkan bot mengecek UI
+                }
+
+                // Cek Validasi Lokal UI (Jika React menolak ID tanpa mengirim API)
+                accountName = await page.evaluate(() => {
+                    const titleEl = document.querySelector('.swal2-title');
+                    const bodyEl = document.querySelector('.swal2-html-container');
+                    
+                    const titleText = titleEl ? titleEl.innerText.toLowerCase().trim() : '';
+                    const bodyText = bodyEl ? bodyEl.innerText.toLowerCase().trim() : '';
+                    
+                    // Deteksi ID fiktif/ngawur dari pop-up lokal
+                    if (titleText === 'cek user id' && !bodyText.includes('nama:') && !bodyText.includes('username:')) return 'ERROR_WEB:ID ditolak oleh sistem.';
+                    if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) return 'ERROR_WEB:ID Anda salah.';
+                    
+                    // Backup: Jika Network gagal ditangkap, tetap bisa baca dari UI
+                    if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
+                    if (titleText.includes('nama:')) return titleEl.innerText.split(/nama:/i)[1].trim();
+                    
+                    return 'LOADING';
+                });
+
+                if (accountName !== 'LOADING') break; // Jika sudah dapat jawaban, keluar loop
             }
 
-            const responseData = await apiResponse.json();
+            // 4. Validasi Hasil Akhir
+            if (accountName === 'LOADING' || accountName === '') {
+                throw new Error('Timeout: Sistem Tokogame lambat merespons.');
+            }
 
-            // Membaca langsung dari struktur JSON backend
-            if (responseData.code === "SUCCESS" && responseData.data && responseData.data.username) {
-                accountName = responseData.data.username;
-            } else {
-                // Jika API membalas error atau ID ngawur
+            if (accountName.startsWith('ERROR_WEB:')) {
                 isDitolak = true;
-                throw new Error(`Ditolak: ID Anda salah atau tidak ditemukan.`);
+                throw new Error(`Ditolak: ${accountName.replace('ERROR_WEB:', '')}`);
             }
 
             success = true;
-            break; 
-
-        } catch (error) { 
-            errorMessage = error.message;
-            if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
-            if (isDitolak) break;
-            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
-        } finally { 
-            if (page && !page.isClosed()) await page.close();
-            if (context) await context.close(); 
-        }
-    }
-
+            break;
     // =================================================================
     // PENYELESAIAN & PENGIRIMAN RESPONSE FINAL
     // =================================================================
