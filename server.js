@@ -14,6 +14,8 @@ app.use(express.json());
 // ==========================================
 let browser;
 let isScraping = false;
+let requestsSinceLastRestart = 0;
+const MAX_REQUESTS = 50; // Restart browser setiap 50 antrian selesai
 const requestQueue = [];
 
 const botStats = {
@@ -57,7 +59,12 @@ const initBrowser = async () => {
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-blink-features=AutomationControlled',
+                '--disable-gpu', // Mematikan akselerasi GPU
+                '--no-zygote', // Mempercepat proses pembuatan page baru
+                '--disable-software-rasterizer',
+                '--mute-audio',
+                '--disable-extensions'
             ]
         });
         console.log('[SISTEM] Browser siap menerima request.');
@@ -82,11 +89,25 @@ const processQueue = async () => {
     } catch (error) {
         if (!res.headersSent) res.json({ success: false, is_manual: true, message: "Kesalahan server internal." });
     } finally {
-        // [OPTIMASI] Beri jeda 1.5 detik sebelum memproses antrian berikutnya
-        // Mencegah IP VPS terkena pemblokiran sementara (Rate Limit) dari Tokogame
-        setTimeout(() => {
-            isScraping = false;
-            processQueue(); 
+        requestsSinceLastRestart++;
+        
+        setTimeout(async () => {
+            // Cek apakah sudah waktunya mencuci memori browser
+            if (requestsSinceLastRestart >= MAX_REQUESTS && requestQueue.length === 0) {
+                console.log(`[MAINTENANCE] Melakukan restart browser untuk mencegah Memory Leak...`);
+                await browser.close(); 
+                // initBrowser() akan otomatis terpanggil karena kita punya event 'disconnected'
+                requestsSinceLastRestart = 0;
+                
+                // Beri jeda ekstra agar browser baru siap
+                setTimeout(() => {
+                    isScraping = false;
+                    processQueue(); 
+                }, 3000);
+            } else {
+                isScraping = false;
+                processQueue(); 
+            }
         }, 1500); 
     }
 };
@@ -129,12 +150,18 @@ const runScraper = async (req, res) => {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         let page;
+        let context; // 👈 1. Deklarasikan di luar try
+        
         try {
             if (attempt > 1) {
                 console.log(`[RETRY] Mencoba ulang ID: ${account_id} (Percobaan ke-${attempt})`);
             }
             
-            page = await browser.newPage();
+            context = await browser.createBrowserContext(); // 👈 2. Hilangkan kata 'const'
+            page = await context.newPage();
+            
+            const context = await browser.createBrowserContext(); // Membuat sesi incognito
+            page = await context.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
             await page.setRequestInterception(true);
@@ -259,6 +286,9 @@ const runScraper = async (req, res) => {
         } finally {
             if (page && !page.isClosed()) {
                 await page.close();
+            }
+            if (context) {
+                await context.close(); // 👈 3. Tutup terpisah dengan aman
             }
         }
     }
