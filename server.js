@@ -231,11 +231,14 @@ const runScraper = async (req, res) => {
                 }, targetInput, account_id);
             }
 
-            // EKSTRAKSI HASIL
+// =================================================================
+            // 3. EKSTRAKSI HASIL DINAMIS (WAKTU TUNGGU DIPERPANJANG)
+            // =================================================================
             await page.waitForSelector('.swal2-popup', { visible: true, timeout: 5000 });
 
-            for(let i = 0; i < 20; i++) { 
-                await new Promise(r => setTimeout(r, 100));
+            // [PERBAIKAN] Naikkan limit loop ke 50 dan delay ke 200ms (Total kesabaran bot = 10 detik)
+            for(let i = 0; i < 50; i++) { 
+                await new Promise(r => setTimeout(r, 200));
                 
                 accountName = await page.evaluate((id) => {
                     const titleEl = document.querySelector('.swal2-title');
@@ -246,7 +249,9 @@ const runScraper = async (req, res) => {
                     const titleText = titleEl ? titleEl.innerText.toLowerCase() : '';
                     const bodyText = bodyEl ? bodyEl.innerText.toLowerCase() : '';
 
+                    // Jika masih proses mencari, paksa bot untuk terus looping
                     if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) return 'LOADING';
+                    
                     if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
                     if (titleText.includes('nama:')) return titleEl.innerText.split(/nama:/i)[1].trim();
 
@@ -259,6 +264,7 @@ const runScraper = async (req, res) => {
                     return 'LOADING'; 
                 }, account_id);
                 
+                // Jika hasilnya BUKAN loading lagi (sudah dapat nama atau error salah ID), hentikan loop!
                 if (accountName !== 'LOADING') break;
             }
 
@@ -266,21 +272,10 @@ const runScraper = async (req, res) => {
                 isDitolak = true; 
                 throw new Error(`Ditolak: ${accountName.replace('ERROR_WEB:', '')}`);
             }
-            if (accountName === 'LOADING' || accountName === '') throw new Error('Timeout: Gagal membaca isi Pop-up.');
+            if (accountName === 'LOADING' || accountName === '') throw new Error('Timeout: Web terlalu lambat merespons nama akun.');
 
             success = true;
-            break; 
-
-        } catch (error) {
-            errorMessage = error.message;
-            if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
-            if (isDitolak) break;
-            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
-        } finally {
-            if (page && !page.isClosed()) await page.close();
-            if (context) await context.close(); 
-        }
-    }
+            break;
 
     // PENYELESAIAN
     const timeTaken = ((Date.now() - startTime) / 1000).toFixed(2);
