@@ -181,19 +181,24 @@ const runScraper = async (req, res) => {
                 }
             });
 
-            // [KUNCI 1] Kembali gunakan domcontentloaded agar tidak menunggu script pihak ketiga
             await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
             
-            const exactSelector = 'input[name="userid"]'; 
+            // [PERBAIKAN 1] Cari berdasarkan placeholder untuk memastikan ini kotak yang benar
+            const exactSelector = 'input[placeholder*="User ID"], input[name="userid"]'; 
             await page.waitForSelector(exactSelector, { visible: true, timeout: 8000 });
-            await new Promise(r => setTimeout(r, 600)); // Hydration singkat
+            
+            await new Promise(r => setTimeout(r, 1000)); // Wajib tunggu 1 detik agar React siap
 
             const inputs = await page.$$(exactSelector);
             let targetInput = null;
 
+            // [PERBAIKAN 2] Pastikan elemen benar-benar ada di viewport layar
             for (let el of inputs) {
-                const box = await el.boundingBox();
-                if (box && box.width > 0 && box.height > 0) {
+                const isVisible = await page.evaluate(e => {
+                    const rect = e.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && rect.top >= 0;
+                }, el);
+                if (isVisible) {
                     targetInput = el;
                     break;
                 }
@@ -201,31 +206,31 @@ const runScraper = async (req, res) => {
 
             if (!targetInput) throw new Error('Input field disembunyikan secara visual.');
 
-            // Bersihkan input
-            await targetInput.click();
-            await page.keyboard.down('Control');
-            await page.keyboard.press('A');
-            await page.keyboard.up('Control');
+            // Fokus dan klik 3x untuk memblok seluruh teks bawaan, lalu hapus
+            await targetInput.focus();
+            await targetInput.click({ clickCount: 3 });
             await page.keyboard.press('Backspace');
 
-            // Ketik ID dengan tempo cepat
-            await targetInput.type(account_id, { delay: 20 });
+            // Ketik ID dengan tempo sedikit dilambatkan agar React bisa mencatat state-nya
+            await targetInput.type(account_id, { delay: 60 });
 
-            // [KUNCI 2] VERIFIKASI ANTI-RESET REACT
-            // Cek apakah State React menghapus ketikan kita. Jika ya, paksa ketik ulang!
-            const typedValue = await page.evaluate(el => el.value, targetInput);
-            if (typedValue !== account_id) {
-                console.log(`[KOREKSI] React mereset input. Mengetik ulang ID...`);
-                await targetInput.click();
-                await targetInput.type(account_id, { delay: 50 });
-            }
-
-            // TRIGGER POPUP 
+            // Trigger Pop-up
             await page.keyboard.press('Enter');
             await page.keyboard.press('Tab');
-            await page.evaluate(el => el.blur(), targetInput);
-            await page.mouse.click(10, 250); 
             
+            // [PERBAIKAN 3] Cek ulang apakah form kosong setelah di-blur
+            const typedValue = await page.evaluate(el => el.value, targetInput);
+            if (typedValue !== account_id) {
+                console.log(`[KOREKSI] React menghapus input! Melakukan injeksi paksa...`);
+                await page.evaluate((el, idVal) => {
+                    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                    nativeSetter.call(el, idVal);
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }, targetInput, account_id);
+            }
+
             // EKSTRAKSI HASIL
             await page.waitForSelector('.swal2-popup', { visible: true, timeout: 5000 });
 
@@ -293,7 +298,6 @@ const runScraper = async (req, res) => {
 
     console.log(`[STATS] Req: ${botStats.total_request} | Sukses: ${botStats.success_count} | ErrBot: ${botStats.error_bot_count} | ErrUser: ${botStats.error_user_count}\n`);
 };
-    
 
 const PORT = 3000;
 app.listen(PORT, async () => {
