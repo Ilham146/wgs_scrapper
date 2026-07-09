@@ -149,19 +149,19 @@ const runScraper = async (req, res) => {
     const MAX_RETRIES = 2; // Batas maksimal percobaan
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        // DEKLARASI AMAN DI SINI (Di luar blok try)
         let page;
-        let context; // 👈 1. Deklarasikan di luar try
-        
+        let context; 
+
         try {
             if (attempt > 1) {
                 console.log(`[RETRY] Mencoba ulang ID: ${account_id} (Percobaan ke-${attempt})`);
             }
             
-            context = await browser.createBrowserContext(); // 👈 2. Hilangkan kata 'const'
+            // Perhatikan: Tidak ada kata 'let' atau 'const' di sini!
+            context = await browser.createBrowserContext(); 
             page = await context.newPage();
             
-            const context = await browser.createBrowserContext(); // Membuat sesi incognito
-            page = await context.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
             await page.setRequestInterception(true);
@@ -183,7 +183,6 @@ const runScraper = async (req, res) => {
             });
 
             // [OPTIMASI] Gunakan networkidle2 alih-alih domcontentloaded
-            // Ini memastikan script React sudah selesai di-download sebelum kita mengetik
             await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
             
             const exactSelector = 'input[name="userid"]'; 
@@ -263,7 +262,7 @@ const runScraper = async (req, res) => {
 
             // Validasi Hasil
             if (accountName.startsWith('ERROR_WEB:')) {
-                isDitolak = true; // Tandai bahwa ini murni kesalahan input user
+                isDitolak = true; 
                 throw new Error(`Ditolak: ${accountName.replace('ERROR_WEB:', '')}`);
             }
             if (accountName === 'LOADING' || accountName === '') throw new Error('Timeout: Gagal membaca isi Pop-up.');
@@ -276,19 +275,20 @@ const runScraper = async (req, res) => {
             errorMessage = error.message;
             if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
             
-            // JANGAN retry jika errornya adalah ID salah (ditolak oleh web)
+            // JANGAN retry jika errornya adalah ID salah
             if (isDitolak) break;
 
-            // Jika percobaan belum maksimal, beri jeda sebelum mengulang
+            // Beri jeda sebelum mengulang
             if (attempt < MAX_RETRIES) {
                 await new Promise(r => setTimeout(r, 2000));
             }
         } finally {
+            // TUTUP DENGAN AMAN
             if (page && !page.isClosed()) {
                 await page.close();
             }
             if (context) {
-                await context.close(); // 👈 3. Tutup terpisah dengan aman
+                await context.close(); 
             }
         }
     }
@@ -319,6 +319,8 @@ const runScraper = async (req, res) => {
 
     console.log(`[STATS] Req: ${botStats.total_request} | Sukses: ${botStats.success_count} | ErrBot: ${botStats.error_bot_count} | ErrUser: ${botStats.error_user_count}\n`);
 };
+
+    
 
 const PORT = 3000;
 app.listen(PORT, async () => {
