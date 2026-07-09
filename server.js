@@ -183,7 +183,7 @@ const runScraper = async (req, res) => {
 
             await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
             
-            // [PERBAIKAN 1] Cari berdasarkan placeholder untuk memastikan ini kotak yang benar
+            // [PERBAIKAN 1] Cari berdasarkan placeholder
             const exactSelector = 'input[placeholder*="User ID"], input[name="userid"]'; 
             await page.waitForSelector(exactSelector, { visible: true, timeout: 8000 });
             
@@ -192,7 +192,7 @@ const runScraper = async (req, res) => {
             const inputs = await page.$$(exactSelector);
             let targetInput = null;
 
-            // [PERBAIKAN 2] Pastikan elemen benar-benar ada di viewport layar
+            // [PERBAIKAN 2] Pastikan elemen ada di viewport layar
             for (let el of inputs) {
                 const isVisible = await page.evaluate(e => {
                     const rect = e.getBoundingClientRect();
@@ -211,7 +211,7 @@ const runScraper = async (req, res) => {
             await targetInput.click({ clickCount: 3 });
             await page.keyboard.press('Backspace');
 
-            // Ketik ID dengan tempo sedikit dilambatkan agar React bisa mencatat state-nya
+            // Ketik ID dengan tempo aman
             await targetInput.type(account_id, { delay: 60 });
 
             // Trigger Pop-up
@@ -231,12 +231,12 @@ const runScraper = async (req, res) => {
                 }, targetInput, account_id);
             }
 
-// =================================================================
+            // =================================================================
             // 3. EKSTRAKSI HASIL DINAMIS (WAKTU TUNGGU DIPERPANJANG)
             // =================================================================
             await page.waitForSelector('.swal2-popup', { visible: true, timeout: 5000 });
 
-            // [PERBAIKAN] Naikkan limit loop ke 50 dan delay ke 200ms (Total kesabaran bot = 10 detik)
+            // [PERBAIKAN 4] Kesabaran bot dinaikkan jadi 10 detik
             for(let i = 0; i < 50; i++) { 
                 await new Promise(r => setTimeout(r, 200));
                 
@@ -249,7 +249,6 @@ const runScraper = async (req, res) => {
                     const titleText = titleEl ? titleEl.innerText.toLowerCase() : '';
                     const bodyText = bodyEl ? bodyEl.innerText.toLowerCase() : '';
 
-                    // Jika masih proses mencari, paksa bot untuk terus looping
                     if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) return 'LOADING';
                     
                     if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
@@ -264,7 +263,6 @@ const runScraper = async (req, res) => {
                     return 'LOADING'; 
                 }, account_id);
                 
-                // Jika hasilnya BUKAN loading lagi (sudah dapat nama atau error salah ID), hentikan loop!
                 if (accountName !== 'LOADING') break;
             }
 
@@ -275,9 +273,22 @@ const runScraper = async (req, res) => {
             if (accountName === 'LOADING' || accountName === '') throw new Error('Timeout: Web terlalu lambat merespons nama akun.');
 
             success = true;
-            break;
+            break; 
 
-    // PENYELESAIAN
+        } catch (error) { // <--- BLOK INI YANG TADI TERHAPUS
+            errorMessage = error.message;
+            if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
+            if (isDitolak) break;
+            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
+        } finally { // <--- BLOK INI YANG TADI TERHAPUS
+            if (page && !page.isClosed()) await page.close();
+            if (context) await context.close(); 
+        }
+    }
+
+    // =================================================================
+    // PENYELESAIAN & PENGIRIMAN RESPONSE FINAL
+    // =================================================================
     const timeTaken = ((Date.now() - startTime) / 1000).toFixed(2);
 
     if (success) {
