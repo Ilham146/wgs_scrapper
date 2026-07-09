@@ -124,7 +124,7 @@ app.post('/api/cek-akun', (req, res) => {
 });
 
 // ==========================================
-// MESIN SCRAPER (FAST MODE + AUTO-RETRY)
+// MESIN SCRAPER (ULTRA FAST MODE + VERIFIKASI)
 // ==========================================
 const runScraper = async (req, res) => {
     const { game_name, account_id } = req.body;
@@ -146,50 +146,37 @@ const runScraper = async (req, res) => {
     let errorMessage = "Sistem sedang sibuk atau Timeout.";
     let success = false;
     
-    const MAX_RETRIES = 2; // Batas maksimal percobaan
+    const MAX_RETRIES = 2; 
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        // DEKLARASI AMAN DI SINI (Di luar blok try)
         let page;
         let context; 
 
         try {
-            if (attempt > 1) {
-                console.log(`[RETRY] Mencoba ulang ID: ${account_id} (Percobaan ke-${attempt})`);
-            }
+            if (attempt > 1) console.log(`[RETRY] Mencoba ulang ID: ${account_id} (Percobaan ke-${attempt})`);
             
-            // Perhatikan: Tidak ada kata 'let' atau 'const' di sini!
             context = await browser.createBrowserContext(); 
             page = await context.newPage();
             
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
             await page.setRequestInterception(true);
+            
             page.on('request', (req) => {
                 const resourceType = req.resourceType();
                 const url = req.url();
-                
-                if (
-                    ['image', 'media', 'font'].includes(resourceType) || 
-                    url.includes('google-analytics') || 
-                    url.includes('googletagmanager') || 
-                    url.includes('facebook') || 
-                    url.includes('tiktok')
-                ) {
+                if (['image', 'media', 'font'].includes(resourceType) || url.includes('google') || url.includes('facebook') || url.includes('tiktok')) {
                     req.abort();
                 } else {
                     req.continue();
                 }
             });
 
-            // [OPTIMASI] Gunakan networkidle2 alih-alih domcontentloaded
-            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+            // [KUNCI 1] Kembali gunakan domcontentloaded agar tidak menunggu script pihak ketiga
+            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
             
             const exactSelector = 'input[name="userid"]'; 
-            await page.waitForSelector(exactSelector, { visible: true, timeout: 15000 });
-
-            // Hydration delay 
-            await new Promise(r => setTimeout(r, 1000));
+            await page.waitForSelector(exactSelector, { visible: true, timeout: 8000 });
+            await new Promise(r => setTimeout(r, 600)); // Hydration singkat
 
             const inputs = await page.$$(exactSelector);
             let targetInput = null;
@@ -204,25 +191,33 @@ const runScraper = async (req, res) => {
 
             if (!targetInput) throw new Error('Input field disembunyikan secara visual.');
 
+            // Bersihkan input
             await targetInput.click();
             await page.keyboard.down('Control');
             await page.keyboard.press('A');
             await page.keyboard.up('Control');
             await page.keyboard.press('Backspace');
 
-            // Ketik ID
-            await targetInput.type(account_id, { delay: 50 });
+            // Ketik ID dengan tempo cepat
+            await targetInput.type(account_id, { delay: 20 });
 
-            // TRIGGER POPUP (Kombinasi Absolut)
+            // [KUNCI 2] VERIFIKASI ANTI-RESET REACT
+            // Cek apakah State React menghapus ketikan kita. Jika ya, paksa ketik ulang!
+            const typedValue = await page.evaluate(el => el.value, targetInput);
+            if (typedValue !== account_id) {
+                console.log(`[KOREKSI] React mereset input. Mengetik ulang ID...`);
+                await targetInput.click();
+                await targetInput.type(account_id, { delay: 50 });
+            }
+
+            // TRIGGER POPUP 
             await page.keyboard.press('Enter');
             await page.keyboard.press('Tab');
             await page.evaluate(el => el.blur(), targetInput);
-            await page.mouse.click(100, 250); 
+            await page.mouse.click(10, 250); 
             
-            // =================================================================
-            // 3. EKSTRAKSI HASIL DINAMIS
-            // =================================================================
-            await page.waitForSelector('.swal2-popup', { visible: true, timeout: 8000 });
+            // EKSTRAKSI HASIL
+            await page.waitForSelector('.swal2-popup', { visible: true, timeout: 5000 });
 
             for(let i = 0; i < 20; i++) { 
                 await new Promise(r => setTimeout(r, 100));
@@ -236,66 +231,43 @@ const runScraper = async (req, res) => {
                     const titleText = titleEl ? titleEl.innerText.toLowerCase() : '';
                     const bodyText = bodyEl ? bodyEl.innerText.toLowerCase() : '';
 
-                    if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) {
-                        return 'LOADING';
-                    }
-
+                    if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) return 'LOADING';
                     if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
                     if (titleText.includes('nama:')) return titleEl.innerText.split(/nama:/i)[1].trim();
 
                     if (bodyText.includes('mohon pastikan sudah benar')) {
                         const match = bodyEl.innerText.match(/benar:\s*(.*?)(?:\.|$)/i);
-                        if (match && match[1].trim() === id) {
-                            return 'ERROR_WEB:ID tidak ditemukan (Sistem mengembalikan angka).';
-                        }
+                        if (match && match[1].trim() === id) return 'ERROR_WEB:ID tidak ditemukan (Sistem mengembalikan angka).';
                     }
 
-                    if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) {
-                        return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
-                    }
-                    
+                    if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
                     return 'LOADING'; 
                 }, account_id);
                 
                 if (accountName !== 'LOADING') break;
             }
 
-            // Validasi Hasil
             if (accountName.startsWith('ERROR_WEB:')) {
                 isDitolak = true; 
                 throw new Error(`Ditolak: ${accountName.replace('ERROR_WEB:', '')}`);
             }
             if (accountName === 'LOADING' || accountName === '') throw new Error('Timeout: Gagal membaca isi Pop-up.');
 
-            // Jika sampai di baris ini, berarti SUKSES. Keluar dari loop Retry.
             success = true;
             break; 
 
         } catch (error) {
             errorMessage = error.message;
             if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
-            
-            // JANGAN retry jika errornya adalah ID salah
             if (isDitolak) break;
-
-            // Beri jeda sebelum mengulang
-            if (attempt < MAX_RETRIES) {
-                await new Promise(r => setTimeout(r, 2000));
-            }
+            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
         } finally {
-            // TUTUP DENGAN AMAN
-            if (page && !page.isClosed()) {
-                await page.close();
-            }
-            if (context) {
-                await context.close(); 
-            }
+            if (page && !page.isClosed()) await page.close();
+            if (context) await context.close(); 
         }
     }
 
-    // =================================================================
-    // PENYELESAIAN & PENGIRIMAN RESPONSE FINAL
-    // =================================================================
+    // PENYELESAIAN
     const timeTaken = ((Date.now() - startTime) / 1000).toFixed(2);
 
     if (success) {
@@ -304,22 +276,13 @@ const runScraper = async (req, res) => {
         if (!res.headersSent) res.json({ success: true, account_name: accountName, is_manual: false });
     } else {
         console.log(`[ERROR FINAL] ${errorMessage}`);
-        
         if (isDitolak) botStats.error_user_count++;
         else botStats.error_bot_count++;
-
-        if (!res.headersSent) {
-            res.json({ 
-                success: false, 
-                is_manual: !isDitolak, 
-                message: isDitolak ? errorMessage.replace('Ditolak: ', '') : "Sistem sedang sibuk atau Timeout." 
-            });
-        }
+        if (!res.headersSent) res.json({ success: false, is_manual: !isDitolak, message: isDitolak ? errorMessage.replace('Ditolak: ', '') : "Sistem sedang sibuk atau Timeout." });
     }
 
     console.log(`[STATS] Req: ${botStats.total_request} | Sukses: ${botStats.success_count} | ErrBot: ${botStats.error_bot_count} | ErrUser: ${botStats.error_user_count}\n`);
 };
-
     
 
 const PORT = 3000;
