@@ -29,6 +29,9 @@ const botStats = {
 // ==========================================
 // ROUTES (STATISTIK & DEBUGGING)
 // ==========================================
+// ==========================================
+// ROUTES (STATISTIK & DEBUGGING)
+// ==========================================
 app.get('/api/stats', (req, res) => {
     const successRate = botStats.total_request === 0 ? 0 : ((botStats.success_count / botStats.total_request) * 100).toFixed(1);
     const botErrorRate = botStats.total_request === 0 ? 0 : ((botStats.error_bot_count / botStats.total_request) * 100).toFixed(1);
@@ -43,10 +46,17 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
-app.get('/lihat-error', (req, res) => {
-    res.sendFile(__dirname + '/error-screenshot.png');
+// Route baru untuk melihat screenshot berdasarkan percobaan
+app.get('/lihat-error/:attempt', (req, res) => {
+    const attempt = req.params.attempt;
+    const filePath = __dirname + `/error-screenshot-attempt-${attempt}.png`;
+    
+    res.sendFile(filePath, (err) => {
+        if (err) {
+            res.status(404).send("Screenshot tidak ditemukan atau belum ada error.");
+        }
+    });
 });
-
 // ==========================================
 // MANAJEMEN BROWSER & ANTRIAN
 // ==========================================
