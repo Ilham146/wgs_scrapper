@@ -29,9 +29,6 @@ const botStats = {
 // ==========================================
 // ROUTES (STATISTIK & DEBUGGING)
 // ==========================================
-// ==========================================
-// ROUTES (STATISTIK & DEBUGGING)
-// ==========================================
 app.get('/api/stats', (req, res) => {
     const successRate = botStats.total_request === 0 ? 0 : ((botStats.success_count / botStats.total_request) * 100).toFixed(1);
     const botErrorRate = botStats.total_request === 0 ? 0 : ((botStats.error_bot_count / botStats.total_request) * 100).toFixed(1);
@@ -46,7 +43,6 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
-// Route baru untuk melihat screenshot berdasarkan percobaan
 app.get('/lihat-error/:attempt', (req, res) => {
     const attempt = req.params.attempt;
     const filePath = __dirname + `/error-screenshot-attempt-${attempt}.png`;
@@ -57,6 +53,7 @@ app.get('/lihat-error/:attempt', (req, res) => {
         }
     });
 });
+
 // ==========================================
 // MANAJEMEN BROWSER & ANTRIAN
 // ==========================================
@@ -70,8 +67,8 @@ const initBrowser = async () => {
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage',
                 '--disable-blink-features=AutomationControlled',
-                '--disable-gpu', // Mematikan akselerasi GPU
-                '--no-zygote', // Mempercepat proses pembuatan page baru
+                '--disable-gpu', 
+                '--no-zygote', 
                 '--disable-software-rasterizer',
                 '--mute-audio',
                 '--disable-extensions'
@@ -102,14 +99,11 @@ const processQueue = async () => {
         requestsSinceLastRestart++;
         
         setTimeout(async () => {
-            // Cek apakah sudah waktunya mencuci memori browser
             if (requestsSinceLastRestart >= MAX_REQUESTS && requestQueue.length === 0) {
                 console.log(`[MAINTENANCE] Melakukan restart browser untuk mencegah Memory Leak...`);
                 await browser.close(); 
-                // initBrowser() akan otomatis terpanggil karena kita punya event 'disconnected'
                 requestsSinceLastRestart = 0;
                 
-                // Beri jeda ekstra agar browser baru siap
                 setTimeout(() => {
                     isScraping = false;
                     processQueue(); 
@@ -134,7 +128,7 @@ app.post('/api/cek-akun', (req, res) => {
 });
 
 // ==========================================
-// MESIN SCRAPER (LEVEL 1: NETWORK INTERCEPTOR)
+// MESIN SCRAPER (LEVEL 1.5: HYBRID RADAR)
 // ==========================================
 const runScraper = async (req, res) => {
     const { game_name, account_id } = req.body;
@@ -186,7 +180,7 @@ const runScraper = async (req, res) => {
             const exactSelector = 'input[placeholder*="User ID"], input[name="userid"]'; 
             await page.waitForSelector(exactSelector, { visible: true, timeout: 8000 });
             
-            await new Promise(r => setTimeout(r, 1000)); // Wajib tunggu 1 detik agar React siap
+            await new Promise(r => setTimeout(r, 1000)); 
 
             const inputs = await page.$$(exactSelector);
             let targetInput = null;
@@ -214,7 +208,7 @@ const runScraper = async (req, res) => {
 
             // Ketik ID dengan tempo yang pas untuk state React
             await targetInput.type(account_id, { delay: 80 });
-            await new Promise(r => setTimeout(r, 500)); // Jeda agar React menyerap value
+            await new Promise(r => setTimeout(r, 500)); 
 
             // Cek sinkronisasi Keyboard
             let typedValue = await page.evaluate(el => el.value, targetInput);
@@ -236,7 +230,7 @@ const runScraper = async (req, res) => {
             // [OPTIMASI LEVEL 1.5] JALUR CEPAT HYBRID (NETWORK + UI)
             // =================================================================
             
-            // 1. Pasang penyadap Network (Berjalan di background tanpa memblokir bot)
+            // 1. Pasang penyadap Network (Berjalan di background)
             let networkData = null;
             let networkCaught = false;
             
@@ -267,13 +261,13 @@ const runScraper = async (req, res) => {
                             const parsed = JSON.parse(networkData);
                             if (parsed.code === "SUCCESS" && parsed.data && parsed.data.username) {
                                 accountName = parsed.data.username;
-                                break; // Langsung keluar dari loop
+                                break; 
                             } else {
                                 accountName = 'ERROR_WEB:ID Anda salah atau tidak ditemukan di API.';
                                 break;
                             }
                         }
-                    } catch(e) {} // Abaikan jika error parse, biarkan bot mengecek UI
+                    } catch(e) {} 
                 }
 
                 // Cek Validasi Lokal UI (Jika React menolak ID tanpa mengirim API)
@@ -284,18 +278,16 @@ const runScraper = async (req, res) => {
                     const titleText = titleEl ? titleEl.innerText.toLowerCase().trim() : '';
                     const bodyText = bodyEl ? bodyEl.innerText.toLowerCase().trim() : '';
                     
-                    // Deteksi ID fiktif/ngawur dari pop-up lokal
                     if (titleText === 'cek user id' && !bodyText.includes('nama:') && !bodyText.includes('username:')) return 'ERROR_WEB:ID ditolak oleh sistem.';
                     if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) return 'ERROR_WEB:ID Anda salah.';
                     
-                    // Backup: Jika Network gagal ditangkap, tetap bisa baca dari UI
                     if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
                     if (titleText.includes('nama:')) return titleEl.innerText.split(/nama:/i)[1].trim();
                     
                     return 'LOADING';
                 });
 
-                if (accountName !== 'LOADING') break; // Jika sudah dapat jawaban, keluar loop
+                if (accountName !== 'LOADING') break; 
             }
 
             // 4. Validasi Hasil Akhir
@@ -308,8 +300,23 @@ const runScraper = async (req, res) => {
                 throw new Error(`Ditolak: ${accountName.replace('ERROR_WEB:', '')}`);
             }
 
+            // Jika semua lancar
             success = true;
-            break;
+            break; 
+
+        // === BAGIAN INI YANG TADI TERHAPUS ===
+        } catch (error) { 
+            errorMessage = error.message;
+            if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
+            if (isDitolak) break;
+            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
+        } finally { 
+            if (page && !page.isClosed()) await page.close();
+            if (context) await context.close(); 
+        }
+        // =====================================
+    }
+
     // =================================================================
     // PENYELESAIAN & PENGIRIMAN RESPONSE FINAL
     // =================================================================
@@ -328,7 +335,6 @@ const runScraper = async (req, res) => {
 
     console.log(`[STATS] Req: ${botStats.total_request} | Sukses: ${botStats.success_count} | ErrBot: ${botStats.error_bot_count} | ErrUser: ${botStats.error_user_count}\n`);
 };
-
 
 const PORT = 3000;
 app.listen(PORT, async () => {
