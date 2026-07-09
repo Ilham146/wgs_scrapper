@@ -246,20 +246,35 @@ const runScraper = async (req, res) => {
                     
                     if (!titleEl && !bodyEl) return 'LOADING';
 
-                    const titleText = titleEl ? titleEl.innerText.toLowerCase() : '';
-                    const bodyText = bodyEl ? bodyEl.innerText.toLowerCase() : '';
+                    const titleText = titleEl ? titleEl.innerText.toLowerCase().trim() : '';
+                    const bodyText = bodyEl ? bodyEl.innerText.toLowerCase().trim() : '';
+                    const strId = String(id).toLowerCase().trim();
 
-                    if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) return 'LOADING';
+                    // 1. Masih loading
+                    if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) {
+                        return 'LOADING';
+                    }
                     
+                    // 2. ID Valid (Sukses menemukan nama)
                     if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
                     if (titleText.includes('nama:')) return titleEl.innerText.split(/nama:/i)[1].trim();
+                    if (bodyText.includes('username:')) return bodyEl.innerText.split(/username:/i)[1].split('\n')[0].trim();
+                    if (bodyText.includes('nama:')) return bodyEl.innerText.split(/nama:/i)[1].split('\n')[0].trim();
 
-                    if (bodyText.includes('mohon pastikan sudah benar')) {
-                        const match = bodyEl.innerText.match(/benar:\s*(.*?)(?:\.|$)/i);
-                        if (match && match[1].trim() === id) return 'ERROR_WEB:ID tidak ditemukan (Sistem mengembalikan angka).';
+                    // 3. LOGIKA BARU: Tangkap "Cek User ID" sebagai ID Salah (fiktif)
+                    if (titleText === 'cek user id' || bodyText.includes('pastikan sudah benar')) {
+                        // Pastikan di dalamnya tidak ada kata "nama" agar tidak salah blokir
+                        if (!bodyText.includes('nama:') && !bodyText.includes('username:')) {
+                            return 'ERROR_WEB:ID tidak ditemukan (Sistem mengembalikan angka).';
+                        }
                     }
 
-                    if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
+                    // 4. Pesan error eksplisit dari web
+                    if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) {
+                        return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
+                    }
+                    
+                    // Jika belum ada yang cocok, anggap masih loading (atau transisi)
                     return 'LOADING'; 
                 }, account_id);
                 
