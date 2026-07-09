@@ -134,7 +134,7 @@ app.post('/api/cek-akun', (req, res) => {
 });
 
 // ==========================================
-// MESIN SCRAPER (ULTRA FAST MODE + VERIFIKASI)
+// MESIN SCRAPER (LEVEL 1: NETWORK INTERCEPTOR)
 // ==========================================
 const runScraper = async (req, res) => {
     const { game_name, account_id } = req.body;
@@ -183,7 +183,6 @@ const runScraper = async (req, res) => {
 
             await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
             
-            // [PERBAIKAN 1] Cari berdasarkan placeholder
             const exactSelector = 'input[placeholder*="User ID"], input[name="userid"]'; 
             await page.waitForSelector(exactSelector, { visible: true, timeout: 8000 });
             
@@ -192,7 +191,6 @@ const runScraper = async (req, res) => {
             const inputs = await page.$$(exactSelector);
             let targetInput = null;
 
-            // [PERBAIKAN 2] Pastikan elemen ada di viewport layar
             for (let el of inputs) {
                 const isVisible = await page.evaluate(e => {
                     const rect = e.getBoundingClientRect();
@@ -206,9 +204,7 @@ const runScraper = async (req, res) => {
 
             if (!targetInput) throw new Error('Input field disembunyikan secara visual.');
 
-            // Fokus dan klik 3x untuk memblok seluruh teks bawaan, lalu hapus
-            await targetInput.focus();
-// Bersihkan input menggunakan metode seleksi natural
+            // Bersihkan input menggunakan metode seleksi natural
             await targetInput.click();
             await page.keyboard.down('Control');
             await page.keyboard.press('A');
@@ -220,12 +216,11 @@ const runScraper = async (req, res) => {
             await targetInput.type(account_id, { delay: 80 });
             await new Promise(r => setTimeout(r, 500)); // Jeda agar React menyerap value
 
-            // [PERBAIKAN 3] Cek sinkronisasi. JANGAN gunakan nativeSetter!
+            // Cek sinkronisasi Keyboard
             let typedValue = await page.evaluate(el => el.value, targetInput);
             if (typedValue !== account_id) {
                 console.log(`[KOREKSI] State belum sinkron. Mengetik ulang via Keyboard...`);
                 
-                // Bersihkan ulang secara manual
                 await targetInput.click();
                 await page.keyboard.down('Control');
                 await page.keyboard.press('A');
@@ -233,80 +228,51 @@ const runScraper = async (req, res) => {
                 await page.keyboard.press('Backspace');
                 await new Promise(r => setTimeout(r, 400));
                 
-                // Ketik ulang dengan tempo lebih lambat agar tidak tertinggal lagi
                 await targetInput.type(account_id, { delay: 150 });
                 await new Promise(r => setTimeout(r, 500));
             }
 
-            // Trigger Pop-up
+            // =================================================================
+            // [OPTIMASI LEVEL 1] JALUR CEPAT (NETWORK INTERCEPTION)
+            // =================================================================
+            
+            // 1. Pasang alat penyadap Network SEBELUM menekan Enter
+            const responsePromise = page.waitForResponse(
+                (response) => response.url().includes('/validate-order') && response.request().method() !== 'OPTIONS',
+                { timeout: 5000 }
+            ).catch(() => null);
+
+            // 2. Trigger pengiriman form
             await page.keyboard.press('Enter');
             await page.keyboard.press('Tab');
+            
+            // 3. Bot langsung menangkap JSON (Mengabaikan UI pop-up di layar)
+            const apiResponse = await responsePromise;
 
-            // =================================================================
-            // 3. EKSTRAKSI HASIL DINAMIS (WAKTU TUNGGU DIPERPANJANG)
-            // =================================================================
-            await page.waitForSelector('.swal2-popup', { visible: true, timeout: 5000 });
-
-            // [PERBAIKAN 4] Kesabaran bot dinaikkan jadi 10 detik
-            for(let i = 0; i < 50; i++) { 
-                await new Promise(r => setTimeout(r, 200));
-                
-                accountName = await page.evaluate((id) => {
-                    const titleEl = document.querySelector('.swal2-title');
-                    const bodyEl = document.querySelector('.swal2-html-container');
-                    
-                    if (!titleEl && !bodyEl) return 'LOADING';
-
-                    const titleText = titleEl ? titleEl.innerText.toLowerCase().trim() : '';
-                    const bodyText = bodyEl ? bodyEl.innerText.toLowerCase().trim() : '';
-                    const strId = String(id).toLowerCase().trim();
-
-                    // 1. Masih loading
-                    if (titleText.includes('mencari') || bodyText.includes('mencari') || bodyText.includes('loading')) {
-                        return 'LOADING';
-                    }
-                    
-                    // 2. ID Valid (Sukses menemukan nama)
-                    if (titleText.includes('username:')) return titleEl.innerText.split(/username:/i)[1].trim();
-                    if (titleText.includes('nama:')) return titleEl.innerText.split(/nama:/i)[1].trim();
-                    if (bodyText.includes('username:')) return bodyEl.innerText.split(/username:/i)[1].split('\n')[0].trim();
-                    if (bodyText.includes('nama:')) return bodyEl.innerText.split(/nama:/i)[1].split('\n')[0].trim();
-
-                    // 3. LOGIKA BARU: Tangkap "Cek User ID" sebagai ID Salah (fiktif)
-                    if (titleText === 'cek user id' || bodyText.includes('pastikan sudah benar')) {
-                        // Pastikan di dalamnya tidak ada kata "nama" agar tidak salah blokir
-                        if (!bodyText.includes('nama:') && !bodyText.includes('username:')) {
-                            return 'ERROR_WEB:ID tidak ditemukan (Sistem mengembalikan angka).';
-                        }
-                    }
-
-                    // 4. Pesan error eksplisit dari web
-                    if (bodyText.includes('tidak ditemukan') || bodyText.includes('salah')) {
-                        return 'ERROR_WEB:ID Anda salah, cek User ID Anda.';
-                    }
-                    
-                    // Jika belum ada yang cocok, anggap masih loading (atau transisi)
-                    return 'LOADING'; 
-                }, account_id);
-                
-                if (accountName !== 'LOADING') break;
+            if (!apiResponse) {
+                throw new Error('Timeout: API Tokogame lambat merespons atau terputus.');
             }
 
-            if (accountName.startsWith('ERROR_WEB:')) {
-                isDitolak = true; 
-                throw new Error(`Ditolak: ${accountName.replace('ERROR_WEB:', '')}`);
+            const responseData = await apiResponse.json();
+
+            // Membaca langsung dari struktur JSON backend
+            if (responseData.code === "SUCCESS" && responseData.data && responseData.data.username) {
+                accountName = responseData.data.username;
+            } else {
+                // Jika API membalas error atau ID ngawur
+                isDitolak = true;
+                throw new Error(`Ditolak: ID Anda salah atau tidak ditemukan.`);
             }
-            if (accountName === 'LOADING' || accountName === '') throw new Error('Timeout: Web terlalu lambat merespons nama akun.');
 
             success = true;
             break; 
 
-        } catch (error) { // <--- BLOK INI YANG TADI TERHAPUS
+        } catch (error) { 
             errorMessage = error.message;
             if (page) await page.screenshot({ path: `error-screenshot-attempt-${attempt}.png` }).catch(() => {});
             if (isDitolak) break;
             if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000));
-        } finally { // <--- BLOK INI YANG TADI TERHAPUS
+        } finally { 
             if (page && !page.isClosed()) await page.close();
             if (context) await context.close(); 
         }
@@ -330,6 +296,7 @@ const runScraper = async (req, res) => {
 
     console.log(`[STATS] Req: ${botStats.total_request} | Sukses: ${botStats.success_count} | ErrBot: ${botStats.error_bot_count} | ErrUser: ${botStats.error_user_count}\n`);
 };
+
 
 const PORT = 3000;
 app.listen(PORT, async () => {
